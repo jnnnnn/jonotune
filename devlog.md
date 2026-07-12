@@ -30,3 +30,22 @@ A real-time pitch spectrograph for singing practice, built with egui/eframe.
 - `trunk 0.21.14` installed.
 - Bumped `rust-toolchain` from 1.92 → 1.97.
 - Native build: ✅.  Web build (`trunk build`): ✅.
+
+---
+
+> **Prompt:** start with a skeleton and a few comments about what you will put in each spot.
+
+### Architecture
+
+Three new modules with skeleton code + TODO comments:
+
+| File | Purpose |
+|---|---|
+| `src/audio.rs` | `AudioCapture` trait + `native` (cpal+ringbuf) and `wasm` (Web Audio API) backends |
+| `src/pitch.rs` | `PitchDetector` — autocorrelation-based, with unit tests for sine wave & silence |
+| `src/spectrograph.rs` | `Spectrograph` — ring-buffer history, egui widget with scrolling log-frequency view |
+| `src/app.rs` | Wires mic → detector → spectrograph; top bar with pitch readout + note name |
+
+- Added `ringbuf` 0.4 dependency (native audio ring buffer).
+- `hz_to_note_name()` utility (e.g. 440 Hz → "A4").
+- Native: ✅.  Wasm: ✅.
