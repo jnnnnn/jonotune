@@ -49,3 +49,15 @@ Three new modules with skeleton code + TODO comments:
 - Added `ringbuf` 0.4 dependency (native audio ring buffer).
 - `hz_to_note_name()` utility (e.g. 440 Hz → "A4").
 - Native: ✅.  Wasm: ✅.
+
+---
+
+> **Prompt:** yep, get going
+
+### Implemented
+
+- **Native audio capture** (`audio.rs`): opens default mic via `cpal`, streams f32 samples into a lock-free `ringbuf`, UI thread drains each frame.
+- **Pitch detection** (`pitch.rs`): YIN algorithm (squared difference + cumulative mean normalization + parabolic interpolation). 5 tests pass (A4=440 Hz, C4=262 Hz, E2=82 Hz, silence, noise).
+- **App wiring** (`app.rs`): `process_audio()` drains mic samples into accumulator, runs YIN on overlapping windows, pushes (Hz, confidence) into spectrograph history.
+- Switched from autocorrelation to YIN — handles pure tones and voice more robustly.
+- Native: ✅ compiles & tests pass.  Wasm: ✅ compiles.

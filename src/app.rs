@@ -21,6 +21,9 @@ pub struct JonotuneApp {
     /// Scrolling pitch-history widget.
     #[serde(skip)]
     spectrograph: Spectrograph,
+    /// Accumulated recent samples for pitch detection.
+    #[serde(skip)]
+    sample_buf: Vec<f32>,
 }
 
 impl Default for JonotuneApp {
@@ -31,6 +34,7 @@ impl Default for JonotuneApp {
             audio: None,
             detector: None,
             spectrograph: Spectrograph::new(256),
+            sample_buf: Vec::new(),
         }
     }
 }
@@ -68,8 +72,11 @@ impl JonotuneApp {
             if let Some(cap) = capture {
                 let sr = cap.sample_rate();
                 self.detector = Some(PitchDetector::new(sr));
+                // Pre-allocate the sample buffer to the detector's required size.
+                let min_samples = self.detector.as_ref().unwrap().min_samples();
+                self.sample_buf = Vec::with_capacity(min_samples * 2);
                 self.audio = Some(cap);
-                log::info!("Microphone opened at {sr} Hz");
+                log::info!("Microphone opened at {sr} Hz, min window: {min_samples} samples");
             } else {
                 log::warn!("No microphone found");
             }
@@ -79,20 +86,44 @@ impl JonotuneApp {
     /// Read a chunk of samples from the mic, run pitch detection, and push the
     /// result into the spectrograph history.
     fn process_audio(&mut self) {
-        // Guard: bail if no mic or no detector yet.
-        let Some(audio) = self.audio.as_mut() else {
-            return;
-        };
-        let Some(detector) = self.detector.as_ref() else {
-            return;
-        };
+        let Some(audio) = self.audio.as_mut() else { return };
+        let Some(detector) = self.detector.as_ref() else { return };
 
-        // TODO: read N samples from the audio capture into a local buffer.
-        // TODO: call detector.detect(&buffer).
-        // TODO: update self.pitch_hz / self.pitch_confidence.
-        // TODO: push result into self.spectrograph.
+        // Read all available samples into a temporary buffer.
+        let mut read_buf = vec![0.0f32; 2048];
+        let n = audio.read_samples(&mut read_buf);
+        if n == 0 {
+            return;
+        }
+        read_buf.truncate(n);
 
-        let _ = (audio, detector);
+        // Accumulate samples.
+        self.sample_buf.extend_from_slice(&read_buf);
+
+        let min_samples = detector.min_samples();
+
+        // If we have enough, run detection and keep the tail for next frame.
+        while self.sample_buf.len() >= min_samples {
+            let window = &self.sample_buf[self.sample_buf.len() - min_samples..];
+            let pitch = detector.detect(window);
+
+            self.pitch_hz = pitch.hz.unwrap_or(0.0);
+            self.pitch_confidence = pitch.confidence;
+
+            self.spectrograph.push(self.pitch_hz, self.pitch_confidence);
+
+            // Discard processed samples (keep overlap of half the window
+            // for smoother transitions between frames).
+            let keep = min_samples / 2;
+            let discard = self.sample_buf.len() - keep;
+            self.sample_buf.drain(..discard);
+        }
+
+        // Cap buffer growth (avoid unbounded memory if something goes wrong).
+        if self.sample_buf.len() > min_samples * 4 {
+            let excess = self.sample_buf.len() - min_samples * 2;
+            self.sample_buf.drain(..excess);
+        }
     }
 }
 

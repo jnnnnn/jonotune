@@ -35,32 +35,73 @@ pub mod native {
     //! - The UI thread drains the ring buffer each frame for pitch detection.
 
     use super::AudioCapture;
+        use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+        use ringbuf::traits::{Consumer, Producer, Split};
+
+        /// Ring buffer capacity in samples (≈ 370 ms at 44 100 Hz).
+    const RING_CAPACITY: usize = 16384;
 
     /// Captures mono f32 samples from the default input device into a ring buffer.
     pub struct NativeAudio {
         sample_rate: u32,
-        /// Shared ring buffer (producer side is in the audio callback).
-        #[allow(dead_code)]
-        buffer: std::sync::Arc<ringbuf::HeapRb<f32>>,
         /// Consumer handle for the UI thread to drain samples from.
-        #[allow(dead_code)]
         consumer: ringbuf::HeapCons<f32>,
         /// Kept alive — dropping stops the stream.
-        #[allow(dead_code)]
         _stream: cpal::Stream,
     }
 
     impl NativeAudio {
         /// Attempt to open the default input device and start streaming.
         ///
-        /// # Errors
-        /// Returns `None` if no input device is available.
+        /// Returns `None` if no input device is available or configuration fails.
         pub fn new() -> Option<Self> {
-            // TODO: open default input device
-            // TODO: configure to mono f32 at a sensible sample rate
-            // TODO: spawn the audio callback that writes into the ring buffer
-            // TODO: keep _stream alive so capture continues
-            None
+            let host = cpal::default_host();
+            let device = host.default_input_device()?;
+            let supported_cfg = device.default_input_config().ok()?;
+            let sample_rate = supported_cfg.sample_rate().0;
+
+            log::info!(
+                "Opening audio device: {} ({} Hz)",
+                device.name().unwrap_or_else(|_| "unknown".into()),
+                sample_rate
+            );
+
+            // Force mono f32.
+            let config = cpal::StreamConfig {
+                channels: 1,
+                sample_rate: cpal::SampleRate(sample_rate),
+                buffer_size: cpal::BufferSize::Default,
+            };
+
+            let ring = ringbuf::HeapRb::new(RING_CAPACITY);
+            let (mut prod, cons) = ring.split();
+
+            let stream = device
+                .build_input_stream(
+                    &config,
+                    move |data: &[f32], _info: &cpal::InputCallbackInfo| {
+                        for &sample in data {
+                            // Silently drop if buffer is full — UI thread
+                            // drains fast enough at 60 fps.
+                            let _ = prod.try_push(sample);
+                        }
+                    },
+                    move |err| {
+                        log::error!("Audio input error: {err}");
+                    },
+                    None,
+                )
+                .ok()?;
+
+            stream.play().ok()?;
+
+            log::info!("Audio stream started at {sample_rate} Hz");
+
+            Some(Self {
+                sample_rate,
+                consumer: cons,
+                _stream: stream,
+            })
         }
     }
 
@@ -69,10 +110,18 @@ pub mod native {
             self.sample_rate
         }
 
-        fn read_samples(&mut self, _buf: &mut [f32]) -> usize {
-            // TODO: drain available samples from the ring buffer into `_buf`
-            // Return number of samples actually read.
-            0
+        fn read_samples(&mut self, buf: &mut [f32]) -> usize {
+            let mut count = 0;
+            for slot in buf.iter_mut() {
+                match self.consumer.try_pop() {
+                    Some(sample) => {
+                        *slot = sample;
+                        count += 1;
+                    }
+                    None => break,
+                }
+            }
+            count
         }
     }
 }
