@@ -61,3 +61,19 @@ Three new modules with skeleton code + TODO comments:
 - **App wiring** (`app.rs`): `process_audio()` drains mic samples into accumulator, runs YIN on overlapping windows, pushes (Hz, confidence) into spectrograph history.
 - Switched from autocorrelation to YIN — handles pure tones and voice more robustly.
 - Native: ✅ compiles & tests pass.  Wasm: ✅ compiles.
+
+---
+
+> **Prompt:** describe how it should look first  /  awesome, do it
+
+### Spectrograph widget
+
+Full implementation of `Spectrograph::ui()`:
+- **Y-axis**: C3 (131 Hz) → C6 (1047 Hz), log scale, 3 octaves.
+- **Grid**: thin lines at every semitone (C, C#, D, …), bolder lines at naturals (white keys).
+- **Labels**: note names (C3, E4, A4, …) along the left edge.
+- **Pitch trail**: connected line segments, amber/gold colour fading with age, opacity = confidence.
+- **Silent gaps**: no line drawn when hz = 0.
+- **Current marker**: bright glow dot at the right edge showing live pitch.
+- **Confidence bar**: thin strip at the bottom, green=high, red=low.
+- Ring-buffer push now works (wraps at `history_len`).
