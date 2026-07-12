@@ -19,3 +19,14 @@ A real-time pitch spectrograph for singing practice, built with egui/eframe.
 - Commits:
   - `Initialize from eframe_template v0.34.1`
   - `Customize template: rename to jonotune, add cpal, strip UI`
+  - `Update devlog with setup summary`
+
+---
+
+> **Prompt:** have set up trunk. now using rust 1.97.
+
+### Done
+
+- `trunk 0.21.14` installed.
+- Bumped `rust-toolchain` from 1.92 → 1.97.
+- Native build: ✅.  Web build (`trunk build`): ✅.
