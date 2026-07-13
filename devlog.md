@@ -130,3 +130,12 @@ Horizontal bar showing cents deviation from the nearest note:
 
 - Replaced the stock eframe_template README with a project-specific one.
 - ASCII diagram of the UI, run instructions for native and web, what-works / what's-left list, architecture diagram, and tech stack summary.
+
+---
+
+> **Prompt:** have added a screenshot in doc, use that instead. remove tech stack and done/todo sections
+
+### Done
+
+- Replaced ASCII diagram with `doc/screen.png` screenshot.
+- Removed "What works" / "What's still to do" and "Tech stack" sections — README is now tighter and more user-facing.

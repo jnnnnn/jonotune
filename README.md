@@ -8,36 +8,7 @@ where you drifted.
 Runs as a native desktop app **and** as a web page. Built with
 [egui](https://github.com/emilk/egui).
 
-## What you see
-
-```
-┌─────────────────────────────────────────────────────┐
-│  🎤 Re-open Mic    │  🌙 Dark mode                  │
-│  ▓▓▓▓▓▓▓▓▓░░░ -24 dB   Pitch: 329.6 Hz (E4)  92%   │
-│  D#4  [──────●──────]  E4      +3¢                  │
-├─────────────────────────────────────────────────────┤
-│  C6  ─                                              │
-│  B5  ─                                              │
-│  A5  ─                 ╱╲                            │
-│  G5  ─               ╱    ╲      ╱╲                  │
-│  F5  ─             ╱        ╲  ╱    ╲                │
-│  E5  ─           ╱            ╲        ●  ← live     │
-│  D5  ─         ╱                                    │
-│  C5  ─                                              │
-│  B4  ─                                              │
-│  A4  ─                                              │
-│  G4  ─                                              │
-│  F4  ─                                              │
-│  E4  ─                                              │
-│  D4  ─                                              │
-│  C4  ─                                              │
-│  B3  ─                                              │
-│  C3  ────────────────────────────────────────        │
-│  ▓▓▓▓▓▓▓░░░░░░░░░░░░░░░░░░░░  confidence            │
-├─────────────────────────────────────────────────────┤
-│                                     🎤 Mic active   │
-└─────────────────────────────────────────────────────┘
-```
+![screenshot](doc/screen.png)
 
 **Top bar:**
 
@@ -81,33 +52,13 @@ trunk serve
 ```
 
 Then open `http://localhost:8080` (add `#dev` to skip the service worker
-cache). Microphone support in the browser isn't wired up yet — see below.
+cache).
 
 To build for deployment:
 
 ```sh
 trunk build --release   # outputs to dist/
 ```
-
-## What works
-
-- Native mic capture (cpal + lock-free ring buffer)
-- YIN pitch detection with confidence scoring
-- Scrolling pitch history with note grid and labels
-- VU meter with dB scale
-- Tuning bar with cents offset and smoothed tracking
-- Dark/light theme toggle
-- Compiles for both native and wasm
-
-## What's still to do
-
-- **Web audio backend** — the "Enable Microphone" button doesn't do
-  anything yet. Needs `getUserMedia` → `AudioContext` → `AnalyserNode`
-  wired up.
-- **More polish** — target-note line you can set, better colors for
-  light theme, responsive sizing.
-- **Test with real singing** — it's been tested with sine waves and
-  humming. Real voice might reveal edge cases in the YIN thresholds.
 
 ## Architecture
 
@@ -125,15 +76,6 @@ microphone ──► cpal ──► ringbuf ──► YIN detector ──► Spe
 | `src/app.rs` | Wires everything together: audio → detection → display. VU meter, tuning bar, note helpers |
 | `src/main.rs` | Native entry point |
 | `src/lib.rs` | Wasm entry point |
-
-## Tech stack
-
-- **Rust** 1.97 (edition 2024)
-- **egui** 0.34 / **eframe** 0.34 — immediate-mode GUI + native/web runtime
-- **cpal** 0.15 — cross-platform audio input
-- **ringbuf** 0.4 — lock-free single-producer-single-consumer queue
-- **Trunk** — wasm bundler and dev server
-- **GitHub Pages** — CI workflow included (`.github/workflows/pages.yml`)
 
 ## License
 
