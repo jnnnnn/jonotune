@@ -58,8 +58,6 @@ impl JonotuneApp {
         };
 
         // ---- Open the microphone ----
-        // Native: synchronous.  Wasm: will need to be triggered by a button
-        // (getUserMedia requires a user gesture), so we defer to the UI.
         #[cfg(not(target_arch = "wasm32"))]
         {
             app.try_open_mic();
@@ -76,7 +74,6 @@ impl JonotuneApp {
             if let Some(cap) = capture {
                 let sr = cap.sample_rate();
                 self.detector = Some(PitchDetector::new(sr));
-                // Pre-allocate the sample buffer to the detector's required size.
                 let min_samples = self.detector.as_ref().unwrap().min_samples();
                 self.sample_buf = Vec::with_capacity(min_samples * 2);
                 self.audio = Some(cap);
@@ -91,11 +88,9 @@ impl JonotuneApp {
     /// result into the spectrograph history.
     ///
     /// Pushes exactly one frame per call, so the spectrograph scrolls smoothly
-    /// at the UI frame rate regardless of how often pitch detections occur.
-    /// When no pitch is detected, a silent frame (0 Hz) is pushed.
+    /// at the UI frame rate.
     fn process_audio(&mut self) {
         let Some(audio) = self.audio.as_mut() else {
-            // No mic — push a silent frame so the trail keeps scrolling.
             self.push_frame(0.0, 0.0);
             return;
         };
@@ -104,7 +99,6 @@ impl JonotuneApp {
             return;
         };
 
-        // Read all available samples into a temporary buffer.
         let mut read_buf = vec![0.0f32; 2048];
         let n = audio.read_samples(&mut read_buf);
         read_buf.truncate(n);
@@ -113,10 +107,8 @@ impl JonotuneApp {
         if n > 0 {
             let sum_sq: f32 = read_buf.iter().map(|s| s * s).sum();
             let rms = (sum_sq / n as f32).sqrt();
-            // Convert to dB (relative to full scale) and map -48..0 dB → 0..1.
             let db = 20.0 * (rms + 1e-10f32).log10();
             let level = ((db + 48.0) / 48.0).clamp(0.0, 1.0);
-            // Smooth: fast attack, slow release.
             let alpha = if level > self.mic_level { 0.6 } else { 0.08 };
             self.mic_level = alpha * level + (1.0 - alpha) * self.mic_level;
         }
@@ -126,12 +118,10 @@ impl JonotuneApp {
             return;
         }
 
-        // Accumulate samples.
         self.sample_buf.extend_from_slice(&read_buf);
 
         let min_samples = detector.min_samples();
 
-        // Run detection while we have enough samples.
         while self.sample_buf.len() >= min_samples {
             let window = &self.sample_buf[self.sample_buf.len() - min_samples..];
             let pitch = detector.detect(window);
@@ -142,42 +132,32 @@ impl JonotuneApp {
             self.pitch_hz = hz;
             self.pitch_confidence = conf;
 
-            // Discard processed samples (keep overlap of half the window
-            // for smoother transitions between frames).
             let keep = min_samples / 2;
             let discard = self.sample_buf.len() - keep;
             self.sample_buf.drain(..discard);
         }
 
-        // Cap buffer growth (avoid unbounded memory if something goes wrong).
         if self.sample_buf.len() > min_samples * 4 {
             let excess = self.sample_buf.len() - min_samples * 2;
             self.sample_buf.drain(..excess);
         }
 
-        // Push exactly one frame per tick.  If we got a new detection we already
-        // updated pitch_hz/pitch_confidence; otherwise we repeat the last state
-        // so the trail stays connected.
         self.push_frame(self.pitch_hz, self.pitch_confidence);
     }
 
-    /// Push a single (hz, confidence) frame into the spectrograph.
     fn push_frame(&mut self, hz: f32, confidence: f32) {
         self.spectrograph.push(hz, confidence);
     }
 }
 
 impl eframe::App for JonotuneApp {
-    /// Called by the framework to save state before shutdown.
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, eframe::APP_KEY, self);
     }
 
-    /// Called each time the UI needs repainting, which may be many times per second.
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        // Keep the UI alive continuously — without this, egui only repaints on input.
         ui.ctx().request_repaint_after(std::time::Duration::from_millis(16));
-        // ---- Process incoming audio ----
+
         self.process_audio();
 
         // ---- Top bar ----
@@ -185,9 +165,7 @@ impl eframe::App for JonotuneApp {
             egui::MenuBar::new().ui(ui, |ui| {
                 let is_web = cfg!(target_arch = "wasm32");
                 if is_web {
-                    // On wasm, we need a button to request mic access (user gesture).
                     if self.audio.is_none() && ui.button("🎤 Enable Microphone").clicked() {
-                        // TODO: spawn async wasm::WasmAudio::new() via wasm_bindgen_futures
                         log::info!("Microphone button clicked (wasm)");
                     }
                 } else if ui.button("🎤 Re-open Mic").clicked() {
@@ -197,69 +175,12 @@ impl eframe::App for JonotuneApp {
                 egui::widgets::global_theme_preference_buttons(ui);
             });
 
-            // Pitch + level readout row.
+            // Row 1: VU meter + pitch + confidence.
             ui.horizontal(|ui| {
-                // ---- VU meter ----
-                let level_bar_w = 120.0;
-                let level_h = 16.0;
-                let (level_rect, _) = ui.allocate_exact_size(
-                    egui::Vec2::new(level_bar_w, level_h),
-                    egui::Sense::hover(),
-                );
-                let painter = ui.painter();
-                // Background.
-                painter.rect_filled(
-                    level_rect,
-                    2.0,
-                    egui::Color32::from_gray(32),
-                );
-                // Fill.
-                let fill_w = level_rect.width() * self.mic_level;
-                if fill_w > 0.0 {
-                    // Green → yellow → red gradient based on level.
-                    let color = if self.mic_level < 0.5 {
-                        egui::Color32::from_rgb(
-                            (self.mic_level * 2.0 * 200.0) as u8,
-                            180,
-                            40,
-                        )
-                    } else if self.mic_level < 0.8 {
-                        egui::Color32::from_rgb(
-                            200,
-                            ((1.0 - (self.mic_level - 0.5) * 3.33) * 180.0) as u8,
-                            40,
-                        )
-                    } else {
-                        egui::Color32::from_rgb(220, 60, 40)
-                    };
-                    painter.rect_filled(
-                        egui::Rect::from_min_size(
-                            level_rect.min,
-                            egui::Vec2::new(fill_w, level_h),
-                        ),
-                        2.0,
-                        color,
-                    );
-                }
-                // Border.
-                painter.rect_stroke(
-                    level_rect,
-                    2.0,
-                    egui::Stroke::new(1.0f32, egui::Color32::from_gray(100)),
-                    egui::StrokeKind::Inside,
-                );
-                // Label overlaid.
-                painter.text(
-                    level_rect.center(),
-                    egui::Align2::CENTER_CENTER,
-                    format!("{:.0} dB", (self.mic_level * 48.0) - 48.0),
-                    egui::FontId::monospace(10.0),
-                    egui::Color32::from_gray(200),
-                );
+                draw_vu_meter(ui, self.mic_level);
 
                 ui.add_space(8.0);
 
-                // ---- Pitch readout ----
                 ui.label("Pitch:");
                 if self.pitch_hz > 0.0 {
                     ui.label(
@@ -267,10 +188,7 @@ impl eframe::App for JonotuneApp {
                             .monospace(),
                     );
                     let note = hz_to_note_name(self.pitch_hz);
-                    ui.label(
-                        egui::RichText::new(format!("({note})"))
-                            .strong(),
-                    );
+                    ui.label(egui::RichText::new(format!("({note})")).strong());
                 } else {
                     ui.label("—");
                 }
@@ -279,6 +197,12 @@ impl eframe::App for JonotuneApp {
                     self.pitch_confidence * 100.0
                 ));
             });
+
+            // Row 2: tuning indicator (only when a pitch is detected).
+            if self.pitch_hz > 0.0 && self.pitch_confidence > 0.1 {
+                ui.add_space(4.0);
+                draw_tuning_bar(ui, self.pitch_hz, self.pitch_confidence);
+            }
         });
 
         // ---- Spectrograph (main area) ----
@@ -301,23 +225,199 @@ impl eframe::App for JonotuneApp {
     }
 }
 
-/// Map a frequency in Hz to the nearest musical note name (e.g. "A4").
+// ---------------------------------------------------------------------------
+// VU meter
+// ---------------------------------------------------------------------------
+
+fn draw_vu_meter(ui: &mut egui::Ui, level: f32) {
+    let bar_w = 120.0;
+    let bar_h = 16.0;
+    let (rect, _) = ui.allocate_exact_size(
+        egui::Vec2::new(bar_w, bar_h),
+        egui::Sense::hover(),
+    );
+    let painter = ui.painter();
+
+    painter.rect_filled(rect, 2.0, egui::Color32::from_gray(32));
+
+    let fill_w = rect.width() * level;
+    if fill_w > 0.0 {
+        let color = if level < 0.5 {
+            egui::Color32::from_rgb((level * 2.0 * 200.0) as u8, 180, 40)
+        } else if level < 0.8 {
+            egui::Color32::from_rgb(200, ((1.0 - (level - 0.5) * 3.33) * 180.0) as u8, 40)
+        } else {
+            egui::Color32::from_rgb(220, 60, 40)
+        };
+        painter.rect_filled(
+            egui::Rect::from_min_size(rect.min, egui::Vec2::new(fill_w, bar_h)),
+            2.0,
+            color,
+        );
+    }
+
+    painter.rect_stroke(
+        rect,
+        2.0,
+        egui::Stroke::new(1.0f32, egui::Color32::from_gray(100)),
+        egui::StrokeKind::Inside,
+    );
+
+    painter.text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        format!("{:.0} dB", (level * 48.0) - 48.0),
+        egui::FontId::monospace(10.0),
+        egui::Color32::from_gray(200),
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Tuning bar
+// ---------------------------------------------------------------------------
+
+/// Draw a horizontal bar showing cents deviation from the nearest note.
 ///
-/// Uses A4 = 440 Hz, equal temperament.
+/// ```
+///  G#4  [——●——————]  A4    +12¢
+///        -50   0   +50
+/// ```
+fn draw_tuning_bar(ui: &mut egui::Ui, hz: f32, _confidence: f32) {
+    let (nearest_midi, cents) = hz_to_cents(hz);
+    let target_name = midi_to_note_name(nearest_midi);
+    let lower_name = midi_to_note_name(nearest_midi - 1);
+
+    let bar_w = 240.0;
+    let bar_h = 22.0;
+    let (rect, _) = ui.allocate_exact_size(
+        egui::Vec2::new(bar_w, bar_h),
+        egui::Sense::hover(),
+    );
+    let painter = ui.painter();
+
+    // Background.
+    painter.rect_filled(rect, 3.0, egui::Color32::from_gray(24));
+
+    // Coloured zones (left = flat, right = sharp).
+    let cx = rect.center().x;
+    let half_w = rect.width() / 2.0;
+    // Each cent = half_w / 50 pixels.
+    let cents_to_px = |c: f32| -> f32 { (c / 50.0) * half_w };
+
+    // Green zone (±10¢).
+    let green_left = (cx + cents_to_px(-10.0)).max(rect.left());
+    let green_right = (cx + cents_to_px(10.0)).min(rect.right());
+    painter.rect_filled(
+        egui::Rect::from_min_max(
+            egui::Pos2::new(green_left, rect.top() + 2.0),
+            egui::Pos2::new(green_right, rect.bottom() - 2.0),
+        ),
+        0.0,
+        egui::Color32::from_rgb(40, 160, 60),
+    );
+
+    // Yellow zones (±10-25¢).
+    let yellow_l = (cx + cents_to_px(-25.0)).max(rect.left());
+    let yellow_r = (cx + cents_to_px(25.0)).min(rect.right());
+    painter.rect_filled(
+        egui::Rect::from_min_max(
+            egui::Pos2::new(yellow_l, rect.top() + 2.0),
+            egui::Pos2::new(green_left, rect.bottom() - 2.0),
+        ),
+        0.0,
+        egui::Color32::from_rgb(180, 140, 30),
+    );
+    painter.rect_filled(
+        egui::Rect::from_min_max(
+            egui::Pos2::new(green_right, rect.top() + 2.0),
+            egui::Pos2::new(yellow_r, rect.bottom() - 2.0),
+        ),
+        0.0,
+        egui::Color32::from_rgb(180, 140, 30),
+    );
+
+    // Center line.
+    painter.line_segment(
+        [egui::Pos2::new(cx, rect.top()), egui::Pos2::new(cx, rect.bottom())],
+        egui::Stroke::new(1.5f32, egui::Color32::from_gray(180)),
+    );
+
+    // Marker dot.
+    let dot_x = (cx + cents_to_px(cents)).clamp(rect.left() + 4.0, rect.right() - 4.0);
+    let dot_y = rect.center().y;
+    painter.circle_filled(
+        egui::Pos2::new(dot_x, dot_y),
+        4.0,
+        egui::Color32::WHITE,
+    );
+
+    // Labels.
+    let font = egui::FontId::monospace(11.0);
+    painter.text(
+        egui::Pos2::new(rect.left() + 4.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        &lower_name,
+        font.clone(),
+        egui::Color32::from_gray(140),
+    );
+    painter.text(
+        egui::Pos2::new(rect.right() - 4.0, rect.center().y),
+        egui::Align2::RIGHT_CENTER,
+        &target_name,
+        font.clone(),
+        egui::Color32::from_gray(220),
+    );
+
+    // Cents offset text (coloured: green in zone, red outside).
+    let cents_color = if cents.abs() < 10.0 {
+        egui::Color32::from_rgb(80, 220, 80)
+    } else if cents.abs() < 25.0 {
+        egui::Color32::from_rgb(220, 200, 80)
+    } else {
+        egui::Color32::from_rgb(240, 80, 80)
+    };
+    let sign = if cents >= 0.0 { "+" } else { "" };
+    let cents_text = format!("{sign}{cents:.0}¢");
+    painter.text(
+        egui::Pos2::new(dot_x, rect.top() - 2.0),
+        egui::Align2::CENTER_BOTTOM,
+        cents_text,
+        egui::FontId::monospace(10.0),
+        cents_color,
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Note / frequency helpers
+// ---------------------------------------------------------------------------
+
+/// Returns (nearest_midi_note, cents_offset).
+///
+/// Positive cents = sharp, negative = flat.
+/// A4 = MIDI 69 = 440 Hz.
+fn hz_to_cents(hz: f32) -> (i32, f32) {
+    if hz <= 0.0 {
+        return (69, 0.0);
+    }
+    let midi_f = 69.0 + 12.0 * (hz / 440.0).log2();
+    let nearest = midi_f.round() as i32;
+    let cents = 100.0 * (midi_f - nearest as f32);
+    (nearest, cents)
+}
+
+/// Convert a MIDI note number to a name like "A4" or "C#3".
+fn midi_to_note_name(midi: i32) -> String {
+    let names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+    let idx = midi.rem_euclid(12) as usize;
+    let octave = midi / 12 - 1;
+    format!("{}{}", names[idx], octave)
+}
+
+/// Map a frequency in Hz to the nearest musical note name (e.g. "A4").
 fn hz_to_note_name(hz: f32) -> String {
     if hz <= 0.0 {
         return "—".into();
     }
-
-    let note_names = [
-        "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
-    ];
-
-    // MIDI note number: 69 = A4 = 440 Hz
-    let midi = 69.0 + 12.0 * (hz / 440.0).log2();
-    let midi_rounded = midi.round() as i32;
-    let note_idx = midi_rounded.rem_euclid(12) as usize;
-    let octave = (midi_rounded / 12) - 1;
-
-    format!("{}{}", note_names[note_idx], octave)
+    let (midi, _) = hz_to_cents(hz);
+    midi_to_note_name(midi)
 }

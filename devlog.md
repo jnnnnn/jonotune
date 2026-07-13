@@ -95,3 +95,17 @@ Full implementation of `Spectrograph::ui()`:
 ### Fix
 
 - VU meter now uses dB scale (RMS → dB, -48..0 dB mapped to 0..1), smoothed *after* scaling so the level doesn't saturate. Label shows dB instead of %.
+
+---
+
+> **Prompt:** that's working pretty well. can we also have some sort of dial or indicator that shows how close I am to the current predicted note ? like a +/- offset ? suggest designs and then implement
+
+### Tuning indicator
+
+Horizontal bar showing cents deviation from the nearest note:
+- **Left label**: note one semitone below (e.g. "G#4")
+- **Right label**: nearest note / target (e.g. "A4")
+- **Colored zones**: green (±10¢ in tune), yellow (±25¢), red beyond
+- **White dot**: current cents position
+- **Cents text**: "+12¢" or "−8¢" above the dot, colored to match zone
+- `hz_to_cents()` and `midi_to_note_name()` helpers extracted
