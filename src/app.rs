@@ -1,7 +1,6 @@
 use crate::audio::AudioCapture;
 use crate::pitch::PitchDetector;
 use crate::spectrograph::Spectrograph;
-use std::{cell::RefCell, rc::Rc};
 
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -22,12 +21,9 @@ pub struct JonotuneApp {
     mic_level: f32,
 
     // ---- Non-serialized fields ----
-    /// Platform audio capture backend.
-    ///
-    /// Wrapped in `Rc<RefCell<>>` so an async task (wasm `getUserMedia`)
-    /// can inject the capture object after the UI is already running.
+    /// Platform audio capture backend (None until mic is opened).
     #[serde(skip)]
-    audio: Option<Rc<RefCell<Option<Box<dyn AudioCapture>>>>>,
+    audio: Option<Box<dyn AudioCapture>>,
     /// Pitch detector tuned to the capture sample rate.
     #[serde(skip)]
     detector: Option<PitchDetector>,
@@ -40,6 +36,10 @@ pub struct JonotuneApp {
     /// True while waiting for the browser mic permission dialog (wasm only).
     #[serde(skip)]
     mic_pending: bool,
+    /// Receives the `AudioCapture` after the wasm async task completes.
+    #[cfg(target_arch = "wasm32")]
+    #[serde(skip)]
+    audio_rx: Option<std::sync::mpsc::Receiver<Option<Box<dyn AudioCapture>>>>,
 }
 
 impl Default for JonotuneApp {
@@ -55,6 +55,8 @@ impl Default for JonotuneApp {
             spectrograph: Spectrograph::new(256),
             sample_buf: Vec::new(),
             mic_pending: false,
+            #[cfg(target_arch = "wasm32")]
+            audio_rx: None,
         }
     }
 }
@@ -62,10 +64,6 @@ impl Default for JonotuneApp {
 impl JonotuneApp {
     /// Called once before the first frame.
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        // Customize look and feel if desired:
-        // cc.egui_ctx.set_visuals(…);
-        // cc.egui_ctx.set_fonts(…);
-
         // Load previous app state (if any).
         #[cfg_attr(target_arch = "wasm32", allow(unused_mut))]
         let mut app: Self = if let Some(storage) = cc.storage {
@@ -100,7 +98,8 @@ impl JonotuneApp {
             if let Some(cap) = capture {
                 let sr = cap.sample_rate();
                 self.setup_detector(sr);
-                self.audio = Some(Rc::new(RefCell::new(Some(cap))));
+                self.audio = Some(cap);
+                self.mic_pending = false;
             } else {
                 log::warn!("No microphone found");
             }
@@ -113,25 +112,10 @@ impl JonotuneApp {
     /// Pushes exactly one frame per call, so the spectrograph scrolls smoothly
     /// at the UI frame rate.
     fn process_audio(&mut self) {
-        // Borrow the inner audio cell.
-        let audio_cell = match &self.audio {
-            Some(rc) => rc.clone(),
-            None => {
-                self.push_frame(0.0, 0.0);
-                return;
-            }
-        };
-        let mut audio_borrow = audio_cell.borrow_mut();
-        let Some(audio) = audio_borrow.as_mut() else {
+        let Some(audio) = self.audio.as_mut() else {
             self.push_frame(0.0, 0.0);
             return;
         };
-        // On wasm the detector is set up lazily — the audio capture arrives
-        // from an async task after the UI is already running.
-        if self.detector.is_none() {
-            self.setup_detector(audio.sample_rate());
-            self.mic_pending = false;
-        }
         let Some(detector) = self.detector.as_ref() else {
             self.push_frame(0.0, 0.0);
             return;
@@ -184,7 +168,11 @@ impl JonotuneApp {
 
         // Smooth pitch and confidence for the tuning indicator.
         let (target_hz, target_conf) = (self.pitch_hz, self.pitch_confidence);
-        let alpha_hz = if target_hz > 0.0 && target_conf > 0.1 { 0.15 } else { 0.03 };
+        let alpha_hz = if target_hz > 0.0 && target_conf > 0.1 {
+            0.15
+        } else {
+            0.03
+        };
         let alpha_conf = 0.12;
         if self.smooth_hz <= 0.0 {
             self.smooth_hz = target_hz;
@@ -194,14 +182,6 @@ impl JonotuneApp {
             self.smooth_confidence =
                 alpha_conf * target_conf + (1.0 - alpha_conf) * self.smooth_confidence;
         }
-    }
-
-    /// Whether a microphone is currently open and streaming.
-    fn mic_active(&self) -> bool {
-        self.audio
-            .as_ref()
-            .and_then(|rc| rc.borrow().as_ref().map(|_| ()))
-            .is_some()
     }
 
     fn push_frame(&mut self, hz: f32, confidence: f32) {
@@ -215,7 +195,26 @@ impl eframe::App for JonotuneApp {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        ui.ctx().request_repaint_after(std::time::Duration::from_millis(16));
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(16));
+
+        // ---- Poll for async mic result (wasm) ----
+        #[cfg(target_arch = "wasm32")]
+        if let Some(rx) = &self.audio_rx {
+            if let Ok(result) = rx.try_recv() {
+                self.audio_rx = None;
+                if let Some(cap) = result {
+                    let sr = cap.sample_rate();
+                    self.setup_detector(sr);
+                    self.audio = Some(cap);
+                    self.mic_pending = false;
+                    log::info!("Web mic ready at {sr} Hz");
+                } else {
+                    self.mic_pending = false;
+                    log::warn!("Web mic denied or unavailable");
+                }
+            }
+        }
 
         self.process_audio();
 
@@ -224,16 +223,15 @@ impl eframe::App for JonotuneApp {
             egui::MenuBar::new().ui(ui, |ui| {
                 #[cfg(target_arch = "wasm32")]
                 {
-                    let mic_open = self.mic_active();
-                    if !mic_open && !self.mic_pending {
+                    if self.audio.is_none() && !self.mic_pending {
                         if ui.button("🎤 Enable Microphone").clicked() {
                             self.mic_pending = true;
-                            let cell = Rc::new(RefCell::new(None));
-                            self.audio = Some(cell.clone());
+                            let (tx, rx) = std::sync::mpsc::channel();
+                            self.audio_rx = Some(rx);
                             let ctx = ui.ctx().clone();
                             wasm_bindgen_futures::spawn_local(async move {
                                 let result = crate::audio::create_audio_capture().await;
-                                *cell.borrow_mut() = result;
+                                let _ = tx.send(result);
                                 ctx.request_repaint();
                             });
                         }
@@ -259,10 +257,7 @@ impl eframe::App for JonotuneApp {
 
                 ui.label("Pitch:");
                 if self.pitch_hz > 0.0 {
-                    ui.label(
-                        egui::RichText::new(format!("{:.1} Hz", self.pitch_hz))
-                            .monospace(),
-                    );
+                    ui.label(egui::RichText::new(format!("{:.1} Hz", self.pitch_hz)).monospace());
                     let note = hz_to_note_name(self.pitch_hz);
                     ui.label(egui::RichText::new(format!("({note})")).strong());
                 } else {
@@ -287,7 +282,7 @@ impl eframe::App for JonotuneApp {
         // ---- Bottom bar ----
         egui::Panel::bottom("bottom_panel").show_inside(ui, |ui| {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if self.mic_active() {
+                if self.audio.is_some() {
                     ui.label("🎤 Mic active");
                 } else if self.mic_pending {
                     ui.label("🎤 Waiting for mic…");
@@ -308,10 +303,7 @@ impl eframe::App for JonotuneApp {
 fn draw_vu_meter(ui: &mut egui::Ui, level: f32) {
     let bar_w = 120.0;
     let bar_h = 16.0;
-    let (rect, _) = ui.allocate_exact_size(
-        egui::Vec2::new(bar_w, bar_h),
-        egui::Sense::hover(),
-    );
+    let (rect, _) = ui.allocate_exact_size(egui::Vec2::new(bar_w, bar_h), egui::Sense::hover());
     let painter = ui.painter();
 
     painter.rect_filled(rect, 2.0, egui::Color32::from_gray(32));
@@ -369,10 +361,7 @@ fn draw_tuning_bar(ui: &mut egui::Ui, hz: f32, confidence: f32) {
 
     let bar_w = 240.0;
     let bar_h = 22.0;
-    let (rect, _) = ui.allocate_exact_size(
-        egui::Vec2::new(bar_w, bar_h),
-        egui::Sense::hover(),
-    );
+    let (rect, _) = ui.allocate_exact_size(egui::Vec2::new(bar_w, bar_h), egui::Sense::hover());
     let painter = ui.painter();
 
     // Helper to dim an RGB colour.
@@ -427,7 +416,10 @@ fn draw_tuning_bar(ui: &mut egui::Ui, hz: f32, confidence: f32) {
 
     // Center line.
     painter.line_segment(
-        [egui::Pos2::new(cx, rect.top()), egui::Pos2::new(cx, rect.bottom())],
+        [
+            egui::Pos2::new(cx, rect.top()),
+            egui::Pos2::new(cx, rect.bottom()),
+        ],
         egui::Stroke::new(1.5f32, dim_color(egui::Color32::from_gray(180), dim)),
     );
 
@@ -499,7 +491,9 @@ fn hz_to_cents(hz: f32) -> (i32, f32) {
 
 /// Convert a MIDI note number to a name like "A4" or "C#3".
 fn midi_to_note_name(midi: i32) -> String {
-    let names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+    let names = [
+        "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+    ];
     let idx = midi.rem_euclid(12) as usize;
     let octave = midi / 12 - 1;
     format!("{}{}", names[idx], octave)

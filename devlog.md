@@ -161,3 +161,18 @@ Horizontal bar showing cents deviation from the nearest note:
   `get_user_media`), `set_audio` (not `audio`), cfg-gated wasm imports.
 - Native + wasm both compile clean; `trunk build` succeeds; 5/5 tests
   pass.
+
+---
+
+> **Prompt:** Option<Rc<RefCell<Option<Box<dyn is pretty ugly, suggest some options to simplify / yup, do the mpsc
+
+### Done
+
+- Replaced `Rc<RefCell<Option<Box<dyn AudioCapture>>>>` with a plain
+  `Option<Box<dyn AudioCapture>>` + a wasm-only mpsc channel.
+- Button click creates a `std::sync::mpsc::channel()`, spawns the async
+  task with the `Sender`, stores the `Receiver` in `audio_rx`.
+- Each frame polls `rx.try_recv()`; when the result arrives, sets up
+  the detector and stores the capture directly — no interior mutability.
+- `process_audio` is back to simple `self.audio.as_mut()`.
+- Removed `mic_active()` helper — just `.is_some()` now.
