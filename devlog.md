@@ -87,3 +87,11 @@ Full implementation of `Spectrograph::ui()`:
 - **Smooth scrolling**: `process_audio` now pushes exactly one frame per UI tick, even when no new detection occurs. Switched to `request_repaint_after(16ms)` for uninterrupted rendering.
 - **VU meter**: painted level bar in the top panel (green→yellow→red gradient), with smoothed RMS from the mic input. Shows percentage overlay.
 - Pitch readout uses monospace/strong styling for better readability.
+
+---
+
+> **Prompt:** mic level is pegged at 100%
+
+### Fix
+
+- VU meter now uses dB scale (RMS → dB, -48..0 dB mapped to 0..1), smoothed *after* scaling so the level doesn't saturate. Label shows dB instead of %.

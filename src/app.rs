@@ -113,11 +113,12 @@ impl JonotuneApp {
         if n > 0 {
             let sum_sq: f32 = read_buf.iter().map(|s| s * s).sum();
             let rms = (sum_sq / n as f32).sqrt();
-            // Smooth the level display (fast attack, slow release).
-            let alpha = if rms > self.mic_level { 0.3 } else { 0.05 };
-            self.mic_level = alpha * rms + (1.0 - alpha) * self.mic_level;
-            // Normalise to a rough 0..1 range (typical mic input is quiet).
-            self.mic_level = (self.mic_level * 10.0).clamp(0.0, 1.0);
+            // Convert to dB (relative to full scale) and map -48..0 dB → 0..1.
+            let db = 20.0 * (rms + 1e-10f32).log10();
+            let level = ((db + 48.0) / 48.0).clamp(0.0, 1.0);
+            // Smooth: fast attack, slow release.
+            let alpha = if level > self.mic_level { 0.6 } else { 0.08 };
+            self.mic_level = alpha * level + (1.0 - alpha) * self.mic_level;
         }
 
         if n == 0 {
@@ -251,7 +252,7 @@ impl eframe::App for JonotuneApp {
                 painter.text(
                     level_rect.center(),
                     egui::Align2::CENTER_CENTER,
-                    format!("{:.0}%", self.mic_level * 100.0),
+                    format!("{:.0} dB", (self.mic_level * 48.0) - 48.0),
                     egui::FontId::monospace(10.0),
                     egui::Color32::from_gray(200),
                 );
