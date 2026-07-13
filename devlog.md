@@ -176,3 +176,16 @@ Horizontal bar showing cents deviation from the nearest note:
   the detector and stores the capture directly — no interior mutability.
 - `process_audio` is back to simple `self.audio.as_mut()`.
 - Removed `mic_active()` helper — just `.is_some()` now.
+
+---
+
+> **Prompt:** I would like it to only show a single octave, and wrap around when the octave changes. Some sort of octave indicator would be ok. I would also like to be able to tell exactly how in-tune I am from the graph. A piano keyboard on the right hand side that has bar graphs next to each key. When perfectly in tune, only one key should have the "confidence" as it's bar value. When we're off tune, the key(s) in that direction should have a little weighting. This way, as I wiggle around the note, I can see exactly how in tune I am. I want to be able to see clearly, so low values should still be quite visible.
+
+### Design decisions
+
+- **Octave folding**: `freq_to_y` now maps any frequency into a single C→B octave via MIDI-based folding. An "Oct 4" label appears bottom-right.
+- **Piano keyboard**: 12 equal-height rows on the right side (white keys full-width light, black keys narrower dark), vertically aligned with the spectrograph grid.
+- **Activation bars**: rainbow-coloured bars extend rightward from each key. 60¢ half-width triangular kernel, power-scaled (^0.4) so low activations remain visible.
+- **Removed confidence bar**: trail now skips points below 5% confidence instead.
+- Layout: graph (~65%) | keys (64px) | bars (120px).
+- Native + wasm both compile; 5/5 tests pass.

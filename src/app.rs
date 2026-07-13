@@ -276,7 +276,8 @@ impl eframe::App for JonotuneApp {
 
         // ---- Spectrograph (main area) ----
         egui::CentralPanel::default().show_inside(ui, |ui| {
-            self.spectrograph.ui(ui);
+            self.spectrograph
+                .ui(ui, self.smooth_hz, self.smooth_confidence);
         });
 
         // ---- Bottom bar ----
