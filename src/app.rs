@@ -10,6 +10,12 @@ pub struct JonotuneApp {
     pitch_hz: f32,
     /// Confidence of the most recent detection (0..1).
     pitch_confidence: f32,
+    /// Smoothed pitch for the tuning indicator (reduces jitter).
+    #[serde(skip)]
+    smooth_hz: f32,
+    /// Smoothed confidence.
+    #[serde(skip)]
+    smooth_confidence: f32,
     /// Smoothed microphone input level (0..1).
     #[serde(skip)]
     mic_level: f32,
@@ -34,6 +40,8 @@ impl Default for JonotuneApp {
         Self {
             pitch_hz: 0.0,
             pitch_confidence: 0.0,
+            smooth_hz: 0.0,
+            smooth_confidence: 0.0,
             mic_level: 0.0,
             audio: None,
             detector: None,
@@ -143,6 +151,19 @@ impl JonotuneApp {
         }
 
         self.push_frame(self.pitch_hz, self.pitch_confidence);
+
+        // Smooth pitch and confidence for the tuning indicator.
+        let (target_hz, target_conf) = (self.pitch_hz, self.pitch_confidence);
+        let alpha_hz = if target_hz > 0.0 && target_conf > 0.1 { 0.15 } else { 0.03 };
+        let alpha_conf = 0.12;
+        if self.smooth_hz <= 0.0 {
+            self.smooth_hz = target_hz;
+            self.smooth_confidence = target_conf;
+        } else {
+            self.smooth_hz = alpha_hz * target_hz + (1.0 - alpha_hz) * self.smooth_hz;
+            self.smooth_confidence =
+                alpha_conf * target_conf + (1.0 - alpha_conf) * self.smooth_confidence;
+        }
     }
 
     fn push_frame(&mut self, hz: f32, confidence: f32) {
@@ -198,11 +219,9 @@ impl eframe::App for JonotuneApp {
                 ));
             });
 
-            // Row 2: tuning indicator (only when a pitch is detected).
-            if self.pitch_hz > 0.0 && self.pitch_confidence > 0.1 {
-                ui.add_space(4.0);
-                draw_tuning_bar(ui, self.pitch_hz, self.pitch_confidence);
-            }
+            // Row 2: tuning indicator (always visible, uses smoothed pitch).
+            ui.add_space(4.0);
+            draw_tuning_bar(ui, self.smooth_hz, self.smooth_confidence);
         });
 
         // ---- Spectrograph (main area) ----
@@ -282,10 +301,14 @@ fn draw_vu_meter(ui: &mut egui::Ui, level: f32) {
 ///  G#4  [——●——————]  A4    +12¢
 ///        -50   0   +50
 /// ```
-fn draw_tuning_bar(ui: &mut egui::Ui, hz: f32, _confidence: f32) {
+fn draw_tuning_bar(ui: &mut egui::Ui, hz: f32, confidence: f32) {
     let (nearest_midi, cents) = hz_to_cents(hz);
     let target_name = midi_to_note_name(nearest_midi);
     let lower_name = midi_to_note_name(nearest_midi - 1);
+
+    // Dim the bar when confidence is low (silence / noise).
+    let dim = if confidence < 0.1 { 0.3 } else { 1.0 };
+    let dot_alpha = (confidence * 255.0) as u8;
 
     let bar_w = 240.0;
     let bar_h = 22.0;
@@ -295,8 +318,17 @@ fn draw_tuning_bar(ui: &mut egui::Ui, hz: f32, _confidence: f32) {
     );
     let painter = ui.painter();
 
+    // Helper to dim an RGB colour.
+    let dim_color = |c: egui::Color32, s: f32| -> egui::Color32 {
+        egui::Color32::from_rgb(
+            (c.r() as f32 * s) as u8,
+            (c.g() as f32 * s) as u8,
+            (c.b() as f32 * s) as u8,
+        )
+    };
+
     // Background.
-    painter.rect_filled(rect, 3.0, egui::Color32::from_gray(24));
+    painter.rect_filled(rect, 3.0, dim_color(egui::Color32::from_gray(24), dim));
 
     // Coloured zones (left = flat, right = sharp).
     let cx = rect.center().x;
@@ -313,7 +345,7 @@ fn draw_tuning_bar(ui: &mut egui::Ui, hz: f32, _confidence: f32) {
             egui::Pos2::new(green_right, rect.bottom() - 2.0),
         ),
         0.0,
-        egui::Color32::from_rgb(40, 160, 60),
+        dim_color(egui::Color32::from_rgb(40, 160, 60), dim),
     );
 
     // Yellow zones (±10-25¢).
@@ -325,7 +357,7 @@ fn draw_tuning_bar(ui: &mut egui::Ui, hz: f32, _confidence: f32) {
             egui::Pos2::new(green_left, rect.bottom() - 2.0),
         ),
         0.0,
-        egui::Color32::from_rgb(180, 140, 30),
+        dim_color(egui::Color32::from_rgb(180, 140, 30), dim),
     );
     painter.rect_filled(
         egui::Rect::from_min_max(
@@ -333,23 +365,26 @@ fn draw_tuning_bar(ui: &mut egui::Ui, hz: f32, _confidence: f32) {
             egui::Pos2::new(yellow_r, rect.bottom() - 2.0),
         ),
         0.0,
-        egui::Color32::from_rgb(180, 140, 30),
+        dim_color(egui::Color32::from_rgb(180, 140, 30), dim),
     );
 
     // Center line.
     painter.line_segment(
         [egui::Pos2::new(cx, rect.top()), egui::Pos2::new(cx, rect.bottom())],
-        egui::Stroke::new(1.5f32, egui::Color32::from_gray(180)),
+        egui::Stroke::new(1.5f32, dim_color(egui::Color32::from_gray(180), dim)),
     );
 
-    // Marker dot.
+    // Marker dot — only shown when we have a usable pitch.
     let dot_x = (cx + cents_to_px(cents)).clamp(rect.left() + 4.0, rect.right() - 4.0);
     let dot_y = rect.center().y;
-    painter.circle_filled(
-        egui::Pos2::new(dot_x, dot_y),
-        4.0,
-        egui::Color32::WHITE,
-    );
+    let has_pitch = hz > 0.0;
+    if has_pitch {
+        painter.circle_filled(
+            egui::Pos2::new(dot_x, dot_y),
+            4.0,
+            egui::Color32::from_rgba_premultiplied(255, 255, 255, dot_alpha),
+        );
+    }
 
     // Labels.
     let font = egui::FontId::monospace(11.0);
@@ -358,14 +393,14 @@ fn draw_tuning_bar(ui: &mut egui::Ui, hz: f32, _confidence: f32) {
         egui::Align2::LEFT_CENTER,
         &lower_name,
         font.clone(),
-        egui::Color32::from_gray(140),
+        dim_color(egui::Color32::from_gray(140), dim),
     );
     painter.text(
         egui::Pos2::new(rect.right() - 4.0, rect.center().y),
         egui::Align2::RIGHT_CENTER,
         &target_name,
         font.clone(),
-        egui::Color32::from_gray(220),
+        dim_color(egui::Color32::from_gray(220), dim),
     );
 
     // Cents offset text (coloured: green in zone, red outside).
@@ -383,7 +418,7 @@ fn draw_tuning_bar(ui: &mut egui::Ui, hz: f32, _confidence: f32) {
         egui::Align2::CENTER_BOTTOM,
         cents_text,
         egui::FontId::monospace(10.0),
-        cents_color,
+        dim_color(cents_color, dim),
     );
 }
 

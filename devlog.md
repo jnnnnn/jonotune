@@ -109,3 +109,15 @@ Horizontal bar showing cents deviation from the nearest note:
 - **White dot**: current cents position
 - **Cents text**: "+12¢" or "−8¢" above the dot, colored to match zone
 - `hz_to_cents()` and `midi_to_note_name()` helpers extracted
+
+---
+
+> **Prompt:** having it disappear and reappear is bad. also the indicator bounces around a lot even if I hold the note.
+
+### Fixes
+
+- **Tuning bar always visible**: removed the `pitch_hz > 0 && confidence > 0.1` guard; bar now stays on screen at all times.
+- **Exponential smoothing**: added `smooth_hz` and `smooth_confidence` fields with attack α=0.15 / release α=0.03, so the indicator doesn't jitter on steady notes.
+- **Dim on silence**: `dim` multiplier (0.3 when confidence < 0.1) applied to background, zone colors, center line, labels, and cents text — the bar fades subtly instead of vanishing.
+- **Dot alpha**: marker dot uses `Color32::from_rgba_premultiplied` with confidence-driven alpha; dot hidden entirely when `hz == 0`.
+- Smoothed values fed into `draw_tuning_bar` instead of raw `pitch_hz` / `pitch_confidence`.
