@@ -133,22 +133,77 @@ pub mod native {
 #[cfg(target_arch = "wasm32")]
 pub mod wasm {
     use super::AudioCapture;
+    use web_sys::wasm_bindgen::JsCast;
+    use web_sys::wasm_bindgen::JsValue;
+    use web_sys::{
+        AnalyserNode, AudioContext, MediaDevices, MediaStream,
+        MediaStreamAudioSourceNode, MediaStreamConstraints,
+    };
 
     /// Captures mono f32 samples from the browser's microphone via Web Audio API.
+    ///
+    /// Signal chain: `getUserMedia` → `AudioContext` → `MediaStreamAudioSourceNode`
+    /// → `AnalyserNode`.  The analyser is *not* connected to `destination` so there
+    /// is no feedback loop.
     pub struct WasmAudio {
         sample_rate: u32,
-        // TODO: store AudioContext, AnalyserNode, buffer handles
+        analyser: AnalyserNode,
+        data_buffer: Vec<u8>,
+        fft_size: usize,
+        // Kept alive — dropping stops the stream.
+        _audio_ctx: AudioContext,
+        _source: MediaStreamAudioSourceNode,
+        _stream: MediaStream,
     }
 
     impl WasmAudio {
-        /// Request microphone access and create an `AudioContext` + `AnalyserNode` chain.
+        /// Request microphone access and create the Web Audio processing chain.
         ///
-        /// This must be called from within an async context (user-gesture required).
+        /// Must be called from within an async context triggered by a user gesture
+        /// (browsers require this for `getUserMedia`).
         pub async fn new() -> Option<Self> {
-            // TODO: request mic via `navigator.mediaDevices.getUserMedia`
-            // TODO: create AudioContext + AnalyserNode
-            // TODO: connect mic → AnalyserNode
-            None
+            let window = web_sys::window()?;
+            let navigator = window.navigator();
+            let media_devices: MediaDevices = navigator.media_devices().ok()?;
+
+            // Request microphone — needs user gesture.
+            let constraints = MediaStreamConstraints::new();
+            constraints.set_audio(&JsValue::from(true));
+
+            let promise =
+                media_devices.get_user_media_with_constraints(&constraints).ok()?;
+            let stream: MediaStream = wasm_bindgen_futures::JsFuture::from(promise)
+                .await
+                .ok()?
+                .dyn_into()
+                .ok()?;
+
+            let audio_ctx = AudioContext::new().ok()?;
+            let sample_rate = audio_ctx.sample_rate() as u32;
+
+            let analyser = audio_ctx.create_analyser().ok()?;
+            let fft_size = 2048;
+            analyser.set_fft_size(fft_size);
+            // No smoothing — we want raw waveform for pitch detection.
+            analyser.set_smoothing_time_constant(0.0);
+
+            let source = audio_ctx.create_media_stream_source(&stream).ok()?;
+            source.connect_with_audio_node(&analyser).ok()?;
+            // Do NOT connect to destination — avoids feedback.
+
+            let data_buffer = vec![0u8; fft_size as usize];
+
+            log::info!("Wasm audio opened: {sample_rate} Hz, FFT {fft_size}");
+
+            Some(Self {
+                sample_rate,
+                analyser,
+                data_buffer,
+                fft_size: fft_size as usize,
+                _audio_ctx: audio_ctx,
+                _source: source,
+                _stream: stream,
+            })
         }
     }
 
@@ -157,9 +212,23 @@ pub mod wasm {
             self.sample_rate
         }
 
-        fn read_samples(&mut self, _buf: &mut [f32]) -> usize {
-            // TODO: call `AnalyserNode.getByteTimeDomainData` and convert to f32
-            0
+        fn read_samples(&mut self, buf: &mut [f32]) -> usize {
+            // Ensure buffer is sized to current FFT.
+            let fft = self.analyser.fft_size() as usize;
+            if self.data_buffer.len() < fft {
+                self.data_buffer.resize(fft, 0);
+                self.fft_size = fft;
+            }
+
+            self.analyser
+                .get_byte_time_domain_data(&mut self.data_buffer);
+
+            let n = buf.len().min(self.fft_size);
+            for i in 0..n {
+                // Byte time-domain data is u8 [0, 255] centred on 128.
+                buf[i] = (self.data_buffer[i] as f32 - 128.0) / 128.0;
+            }
+            n
         }
     }
 }

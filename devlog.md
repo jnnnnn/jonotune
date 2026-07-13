@@ -139,3 +139,25 @@ Horizontal bar showing cents deviation from the nearest note:
 
 - Replaced ASCII diagram with `doc/screen.png` screenshot.
 - Removed "What works" / "What's still to do" and "Tech stack" sections — README is now tighter and more user-facing.
+
+---
+
+> **Prompt:** get the web version working
+
+### Done
+
+- Implemented `WasmAudio` backend: `getUserMedia` to `AudioContext` to
+  `MediaStreamAudioSourceNode` to `AnalyserNode`. Pulls raw time-domain
+  data each frame via `getByteTimeDomainData` and converts u8 to f32.
+- Added web-sys features: AudioContext, AnalyserNode, MediaStream,
+  MediaStreamConstraints, MediaStreamAudioSourceNode, MediaDevices,
+  Navigator, Window, HtmlCanvasElement.
+- Changed `audio` field to `Rc<RefCell<Option<Box<dyn AudioCapture>>>>`
+  so the wasm async task can inject the capture after the UI starts.
+- "Enable Microphone" button spawns `wasm_bindgen_futures::spawn_local`
+  with the async mic-open; shows "Waiting for mic..." while pending.
+- Detector set up lazily on first `process_audio` after async mic opens.
+- Fixed API mismatches: `get_user_media_with_constraints` (not
+  `get_user_media`), `set_audio` (not `audio`), cfg-gated wasm imports.
+- Native + wasm both compile clean; `trunk build` succeeds; 5/5 tests
+  pass.

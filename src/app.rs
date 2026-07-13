@@ -1,6 +1,7 @@
 use crate::audio::AudioCapture;
 use crate::pitch::PitchDetector;
 use crate::spectrograph::Spectrograph;
+use std::{cell::RefCell, rc::Rc};
 
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -21,9 +22,12 @@ pub struct JonotuneApp {
     mic_level: f32,
 
     // ---- Non-serialized fields ----
-    /// Platform audio capture backend (None until mic is opened).
+    /// Platform audio capture backend.
+    ///
+    /// Wrapped in `Rc<RefCell<>>` so an async task (wasm `getUserMedia`)
+    /// can inject the capture object after the UI is already running.
     #[serde(skip)]
-    audio: Option<Box<dyn AudioCapture>>,
+    audio: Option<Rc<RefCell<Option<Box<dyn AudioCapture>>>>>,
     /// Pitch detector tuned to the capture sample rate.
     #[serde(skip)]
     detector: Option<PitchDetector>,
@@ -33,6 +37,9 @@ pub struct JonotuneApp {
     /// Accumulated recent samples for pitch detection.
     #[serde(skip)]
     sample_buf: Vec<f32>,
+    /// True while waiting for the browser mic permission dialog (wasm only).
+    #[serde(skip)]
+    mic_pending: bool,
 }
 
 impl Default for JonotuneApp {
@@ -47,6 +54,7 @@ impl Default for JonotuneApp {
             detector: None,
             spectrograph: Spectrograph::new(256),
             sample_buf: Vec::new(),
+            mic_pending: false,
         }
     }
 }
@@ -59,6 +67,7 @@ impl JonotuneApp {
         // cc.egui_ctx.set_fonts(…);
 
         // Load previous app state (if any).
+        #[cfg_attr(target_arch = "wasm32", allow(unused_mut))]
         let mut app: Self = if let Some(storage) = cc.storage {
             eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default()
         } else {
@@ -74,18 +83,24 @@ impl JonotuneApp {
         app
     }
 
+    /// Set up the pitch detector after a successful mic open.
+    fn setup_detector(&mut self, sample_rate: u32) {
+        self.detector = Some(PitchDetector::new(sample_rate));
+        let min_samples = self.detector.as_ref().unwrap().min_samples();
+        self.sample_buf = Vec::with_capacity(min_samples * 2);
+        log::info!("Detector ready: {sample_rate} Hz, {min_samples} samples");
+    }
+
     /// Attempt to open the default microphone and wire up the detector.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     fn try_open_mic(&mut self) {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let capture = crate::audio::create_audio_capture();
             if let Some(cap) = capture {
                 let sr = cap.sample_rate();
-                self.detector = Some(PitchDetector::new(sr));
-                let min_samples = self.detector.as_ref().unwrap().min_samples();
-                self.sample_buf = Vec::with_capacity(min_samples * 2);
-                self.audio = Some(cap);
-                log::info!("Microphone opened at {sr} Hz, min window: {min_samples} samples");
+                self.setup_detector(sr);
+                self.audio = Some(Rc::new(RefCell::new(Some(cap))));
             } else {
                 log::warn!("No microphone found");
             }
@@ -98,10 +113,25 @@ impl JonotuneApp {
     /// Pushes exactly one frame per call, so the spectrograph scrolls smoothly
     /// at the UI frame rate.
     fn process_audio(&mut self) {
-        let Some(audio) = self.audio.as_mut() else {
+        // Borrow the inner audio cell.
+        let audio_cell = match &self.audio {
+            Some(rc) => rc.clone(),
+            None => {
+                self.push_frame(0.0, 0.0);
+                return;
+            }
+        };
+        let mut audio_borrow = audio_cell.borrow_mut();
+        let Some(audio) = audio_borrow.as_mut() else {
             self.push_frame(0.0, 0.0);
             return;
         };
+        // On wasm the detector is set up lazily — the audio capture arrives
+        // from an async task after the UI is already running.
+        if self.detector.is_none() {
+            self.setup_detector(audio.sample_rate());
+            self.mic_pending = false;
+        }
         let Some(detector) = self.detector.as_ref() else {
             self.push_frame(0.0, 0.0);
             return;
@@ -166,6 +196,14 @@ impl JonotuneApp {
         }
     }
 
+    /// Whether a microphone is currently open and streaming.
+    fn mic_active(&self) -> bool {
+        self.audio
+            .as_ref()
+            .and_then(|rc| rc.borrow().as_ref().map(|_| ()))
+            .is_some()
+    }
+
     fn push_frame(&mut self, hz: f32, confidence: f32) {
         self.spectrograph.push(hz, confidence);
     }
@@ -184,13 +222,30 @@ impl eframe::App for JonotuneApp {
         // ---- Top bar ----
         egui::Panel::top("top_panel").show_inside(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
-                let is_web = cfg!(target_arch = "wasm32");
-                if is_web {
-                    if self.audio.is_none() && ui.button("🎤 Enable Microphone").clicked() {
-                        log::info!("Microphone button clicked (wasm)");
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let mic_open = self.mic_active();
+                    if !mic_open && !self.mic_pending {
+                        if ui.button("🎤 Enable Microphone").clicked() {
+                            self.mic_pending = true;
+                            let cell = Rc::new(RefCell::new(None));
+                            self.audio = Some(cell.clone());
+                            let ctx = ui.ctx().clone();
+                            wasm_bindgen_futures::spawn_local(async move {
+                                let result = crate::audio::create_audio_capture().await;
+                                *cell.borrow_mut() = result;
+                                ctx.request_repaint();
+                            });
+                        }
+                    } else if self.mic_pending {
+                        ui.add_enabled(false, egui::Button::new("⏳ Waiting for mic…"));
                     }
-                } else if ui.button("🎤 Re-open Mic").clicked() {
-                    self.try_open_mic();
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    if ui.button("🎤 Re-open Mic").clicked() {
+                        self.try_open_mic();
+                    }
                 }
 
                 egui::widgets::global_theme_preference_buttons(ui);
@@ -232,8 +287,10 @@ impl eframe::App for JonotuneApp {
         // ---- Bottom bar ----
         egui::Panel::bottom("bottom_panel").show_inside(ui, |ui| {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if self.audio.is_some() {
+                if self.mic_active() {
                     ui.label("🎤 Mic active");
+                } else if self.mic_pending {
+                    ui.label("🎤 Waiting for mic…");
                 } else {
                     ui.label("🎤 No mic");
                 }
@@ -297,7 +354,7 @@ fn draw_vu_meter(ui: &mut egui::Ui, level: f32) {
 
 /// Draw a horizontal bar showing cents deviation from the nearest note.
 ///
-/// ```
+/// ```text
 ///  G#4  [——●——————]  A4    +12¢
 ///        -50   0   +50
 /// ```
