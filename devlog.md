@@ -121,3 +121,12 @@ Horizontal bar showing cents deviation from the nearest note:
 - **Dim on silence**: `dim` multiplier (0.3 when confidence < 0.1) applied to background, zone colors, center line, labels, and cents text — the bar fades subtly instead of vanishing.
 - **Dot alpha**: marker dot uses `Color32::from_rgba_premultiplied` with confidence-driven alpha; dot hidden entirely when `hz == 0`.
 - Smoothed values fed into `draw_tuning_bar` instead of raw `pitch_hz` / `pitch_confidence`.
+
+---
+
+> **Prompt:** write a very practical and human readme
+
+### Done
+
+- Replaced the stock eframe_template README with a project-specific one.
+- ASCII diagram of the UI, run instructions for native and web, what-works / what's-left list, architecture diagram, and tech stack summary.

@@ -1,85 +1,140 @@
-# eframe template
+# jonotune 🎤
 
-[![dependency status](https://deps.rs/repo/github/emilk/eframe_template/status.svg)](https://deps.rs/repo/github/emilk/eframe_template)
-[![Build Status](https://github.com/emilk/eframe_template/workflows/CI/badge.svg)](https://github.com/emilk/eframe_template/actions?workflow=CI)
+A real-time pitch monitor to help you sing in tune. It listens to your
+microphone, detects the note you're singing, and shows you how close you
+are — like a tuner, but with a scrolling pitch history so you can see
+where you drifted.
 
-This is a template repo for [eframe](https://github.com/emilk/egui/tree/master/crates/eframe), a framework for writing apps using [egui](https://github.com/emilk/egui/).
+Runs as a native desktop app **and** as a web page. Built with
+[egui](https://github.com/emilk/egui).
 
-The goal is for this to be the simplest way to get started writing a GUI app in Rust.
+## What you see
 
-You can compile your app natively or for the web, and share it using Github Pages.
+```
+┌─────────────────────────────────────────────────────┐
+│  🎤 Re-open Mic    │  🌙 Dark mode                  │
+│  ▓▓▓▓▓▓▓▓▓░░░ -24 dB   Pitch: 329.6 Hz (E4)  92%   │
+│  D#4  [──────●──────]  E4      +3¢                  │
+├─────────────────────────────────────────────────────┤
+│  C6  ─                                              │
+│  B5  ─                                              │
+│  A5  ─                 ╱╲                            │
+│  G5  ─               ╱    ╲      ╱╲                  │
+│  F5  ─             ╱        ╲  ╱    ╲                │
+│  E5  ─           ╱            ╲        ●  ← live     │
+│  D5  ─         ╱                                    │
+│  C5  ─                                              │
+│  B4  ─                                              │
+│  A4  ─                                              │
+│  G4  ─                                              │
+│  F4  ─                                              │
+│  E4  ─                                              │
+│  D4  ─                                              │
+│  C4  ─                                              │
+│  B3  ─                                              │
+│  C3  ────────────────────────────────────────        │
+│  ▓▓▓▓▓▓▓░░░░░░░░░░░░░░░░░░░░  confidence            │
+├─────────────────────────────────────────────────────┤
+│                                     🎤 Mic active   │
+└─────────────────────────────────────────────────────┘
+```
 
-## Getting started
+**Top bar:**
 
-Start by clicking "Use this template" at https://github.com/emilk/eframe_template/ or follow [these instructions](https://docs.github.com/en/free-pro-team@latest/github/creating-cloning-and-archiving-repositories/creating-a-repository-from-a-template).
+- **VU meter** — mic input level in dB, green→yellow→red.
+- **Pitch readout** — frequency in Hz + nearest note name + confidence
+  percentage.
+- **Tuning bar** — horizontal slider. The colored dot shows your cents
+  offset from the nearest note. Green zone (±10¢): in tune. Yellow
+  (±25¢): close. Red: you're off. The bar dims in silence instead of
+  disappearing.
 
-Change the name of the crate: Choose a good name for your project, and change the name to it in:
-* `Cargo.toml`
-    * Change the `package.name` from `eframe_template` to `your_crate`.
-    * Change the `package.authors`
-* `main.rs`
-    * Change `eframe_template::TemplateApp` to `your_crate::TemplateApp`
-* `index.html`
-    * Change the `<title>eframe template</title>` to `<title>your_crate</title>`. optional.
-* `assets/sw.js`
-  * Change the `'./eframe_template.js'` to `./your_crate.js` (in `filesToCache` array)
-  * Change the `'./eframe_template_bg.wasm'` to `./your_crate_bg.wasm` (in `filesToCache` array)
+**Main area:**
 
-Alternatively, you can run `fill_template.sh` which will ask for the needed names and email and perform the above patches for you. This is particularly useful if you clone this repository outside GitHub and hence cannot make use of its
-templating function.
+- **Pitch history** — scrolling spectrograph, C3 to C6, log scale.
+  Amber trail fades with age. Brighter = higher confidence.
+- **Confidence strip** — thin bar at the bottom, green when the detector
+  is sure, red when it's guessing.
 
-### Learning about egui
+## Running it
 
-`src/app.rs` contains a simple example app. This is just to give some inspiration - most of it can be removed if you like.
+### Native (desktop)
 
-The official egui docs are at <https://docs.rs/egui>. If you prefer watching a video introduction, check out <https://www.youtube.com/watch?v=NtUkr_z7l84>. For inspiration, check out the [the egui web demo](https://emilk.github.io/egui/index.html) and follow the links in it to its source code.
+```sh
+cargo run --release
+```
 
-### Testing locally
+You need a microphone. It opens the default input device automatically.
 
-`cargo run --release`
+**Linux:** you'll need some system libraries for cpal/egui:
 
-On Linux you need to first run:
+```sh
+sudo apt-get install libxcb-render0-dev libxcb-shape0-dev \
+  libxcb-xfixes0-dev libxkbcommon-dev libssl-dev \
+  libasound2-dev
+```
 
-`sudo apt-get install libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev`
+### Web (browser)
 
-On Fedora Rawhide you need to run:
+```sh
+trunk serve
+```
 
-`dnf install clang clang-devel clang-tools-extra libxkbcommon-devel pkg-config openssl-devel libxcb-devel gtk3-devel atk fontconfig-devel`
+Then open `http://localhost:8080` (add `#dev` to skip the service worker
+cache). Microphone support in the browser isn't wired up yet — see below.
 
-### Web Locally
+To build for deployment:
 
-You can compile your app to [WASM](https://en.wikipedia.org/wiki/WebAssembly) and publish it as a web page.
+```sh
+trunk build --release   # outputs to dist/
+```
 
-We use [Trunk](https://trunk-rs.github.io/trunk) to build for web target.
-1. Install the required target with `rustup target add wasm32-unknown-unknown`.
-2. Install Trunk with `cargo install --locked trunk`.
-3. Run `trunk serve` to build and serve on `http://127.0.0.1:8080`. Trunk will rebuild automatically if you edit the project.
-4. Open `http://127.0.0.1:8080/index.html#dev` in a browser. See the warning below.
+## What works
 
-> `assets/sw.js` script will try to cache our app, and loads the cached version when it cannot connect to server allowing your app to work offline (like PWA).
-> appending `#dev` to `index.html` will skip this caching, allowing us to load the latest builds during development.
+- Native mic capture (cpal + lock-free ring buffer)
+- YIN pitch detection with confidence scoring
+- Scrolling pitch history with note grid and labels
+- VU meter with dB scale
+- Tuning bar with cents offset and smoothed tracking
+- Dark/light theme toggle
+- Compiles for both native and wasm
 
-### Web Deploy
-1. Just run `trunk build --release`.
-2. It will generate a `dist` directory as a "static html" website
-3. Upload the `dist` directory to any of the numerous free hosting websites including [GitHub Pages](https://docs.github.com/en/free-pro-team@latest/github/working-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site).
-4. we already provide a workflow that auto-deploys our app to GitHub pages if you enable it.
-> To enable Github Pages, you need to go to Repository -> Settings -> Pages -> Source -> set to `gh-pages` branch and `/` (root).
->
-> If `gh-pages` is not available in `Source`, just create and push a branch called `gh-pages` and it should be available.
->
-> If you renamed the `main` branch to something else (say you re-initialized the repository with `master` as the initial branch), be sure to edit the github workflows `.github/workflows/pages.yml` file to reflect the change
-> ```yml
-> on:
->   push:
->     branches:
->       - <branch name>
-> ```
+## What's still to do
 
-You can test the template app at <https://emilk.github.io/eframe_template/>.
+- **Web audio backend** — the "Enable Microphone" button doesn't do
+  anything yet. Needs `getUserMedia` → `AudioContext` → `AnalyserNode`
+  wired up.
+- **More polish** — target-note line you can set, better colors for
+  light theme, responsive sizing.
+- **Test with real singing** — it's been tested with sine waves and
+  humming. Real voice might reveal edge cases in the YIN thresholds.
 
-## Updating egui
+## Architecture
 
-As of 2023, egui is in active development with frequent releases with breaking changes. [eframe_template](https://github.com/emilk/eframe_template/) will be updated in lock-step to always use the latest version of egui.
+```
+microphone ──► cpal ──► ringbuf ──► YIN detector ──► Spectrograph ──► egui
+                              │                          │
+                              └──► VU meter              └──► Tuning bar
+```
 
-When updating `egui` and `eframe` it is recommended you do so one version at the time, and read about the changes in [the egui changelog](https://github.com/emilk/egui/blob/master/CHANGELOG.md) and [eframe changelog](https://github.com/emilk/egui/blob/master/crates/eframe/CHANGELOG.md).
+| File | Does |
+|------|------|
+| `src/audio.rs` | Platform audio capture trait + native (cpal) backend + wasm skeleton |
+| `src/pitch.rs` | YIN pitch detector with unit tests |
+| `src/spectrograph.rs` | Ring-buffer pitch history + egui widget (grid, trail, confidence bar) |
+| `src/app.rs` | Wires everything together: audio → detection → display. VU meter, tuning bar, note helpers |
+| `src/main.rs` | Native entry point |
+| `src/lib.rs` | Wasm entry point |
+
+## Tech stack
+
+- **Rust** 1.97 (edition 2024)
+- **egui** 0.34 / **eframe** 0.34 — immediate-mode GUI + native/web runtime
+- **cpal** 0.15 — cross-platform audio input
+- **ringbuf** 0.4 — lock-free single-producer-single-consumer queue
+- **Trunk** — wasm bundler and dev server
+- **GitHub Pages** — CI workflow included (`.github/workflows/pages.yml`)
+
+## License
+
+MIT OR Apache-2.0 (same as egui).
