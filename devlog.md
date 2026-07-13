@@ -77,3 +77,13 @@ Full implementation of `Spectrograph::ui()`:
 - **Current marker**: bright glow dot at the right edge showing live pitch.
 - **Confidence bar**: thin strip at the bottom, green=high, red=low.
 - Ring-buffer push now works (wraps at `history_len`).
+
+---
+
+> **Prompt:** it's pretty jerky, it only moves a bit sometimes. add a level display for the mic and make it scroll continuously
+
+### Fixes
+
+- **Smooth scrolling**: `process_audio` now pushes exactly one frame per UI tick, even when no new detection occurs. Switched to `request_repaint_after(16ms)` for uninterrupted rendering.
+- **VU meter**: painted level bar in the top panel (green→yellow→red gradient), with smoothed RMS from the mic input. Shows percentage overlay.
+- Pitch readout uses monospace/strong styling for better readability.
