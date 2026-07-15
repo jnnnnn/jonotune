@@ -189,3 +189,26 @@ Horizontal bar showing cents deviation from the nearest note:
 - **Removed confidence bar**: trail now skips points below 5% confidence instead.
 - Layout: graph (~65%) | keys (64px) | bars (120px).
 - Native + wasm both compile; 5/5 tests pass.
+
+---
+
+> **Prompt:** fix GitHub Actions CI failures (ubuntu ALSA, rustfmt, clippy)
+
+### Done
+
+- **ALSA dependency**: Added `libasound2-dev` to the `check`, `test`, and
+  `clippy` CI jobs — the `cpal` crate requires it on Linux for native audio.
+- **Rustfmt**: Ran `cargo fmt` to fix indentation, import wrapping, and
+  line-length issues in `audio.rs` and `pitch.rs`.
+- **Clippy**: Fixed 15+ warnings:
+  - Trait imports `as _` for anonymous usage (`audio.rs`)
+  - `unwrap()` → `expect()` with messages (`app.rs`, `pitch.rs`)
+  - Doc-comment backticks (`app.rs`, `spectrograph.rs`)
+  - Redundant type annotations, `needless_range_loop` → iterator,
+    `too_many_lines` → extracted `compute_cmnd` + `find_best_lag` (`pitch.rs`)
+  - `&mut self` → `&self`, needless borrows, removed unused `&self` on
+    associated fns, collapsed `if`, `f32::midpoint`, doc backticks
+    (`spectrograph.rs`)
+  - Renamed `clippy::empty_enum` → `empty_enums` (`Cargo.toml`)
+- `cargo fmt --check`, `cargo clippy --all-features`, and `cargo test --lib`
+  all pass cleanly.

@@ -35,10 +35,10 @@ pub mod native {
     //! - The UI thread drains the ring buffer each frame for pitch detection.
 
     use super::AudioCapture;
-        use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-        use ringbuf::traits::{Consumer, Producer, Split};
+    use cpal::traits::{DeviceTrait as _, HostTrait as _, StreamTrait as _};
+    use ringbuf::traits::{Consumer as _, Producer as _, Split as _};
 
-        /// Ring buffer capacity in samples (≈ 370 ms at 44 100 Hz).
+    /// Ring buffer capacity in samples (≈ 370 ms at 44 100 Hz).
     const RING_CAPACITY: usize = 16384;
 
     /// Captures mono f32 samples from the default input device into a ring buffer.
@@ -83,7 +83,7 @@ pub mod native {
                         for &sample in data {
                             // Silently drop if buffer is full — UI thread
                             // drains fast enough at 60 fps.
-                            let _ = prod.try_push(sample);
+                            _ = prod.try_push(sample);
                         }
                     },
                     move |err| {
@@ -136,8 +136,8 @@ pub mod wasm {
     use web_sys::wasm_bindgen::JsCast;
     use web_sys::wasm_bindgen::JsValue;
     use web_sys::{
-        AnalyserNode, AudioContext, MediaDevices, MediaStream,
-        MediaStreamAudioSourceNode, MediaStreamConstraints,
+        AnalyserNode, AudioContext, MediaDevices, MediaStream, MediaStreamAudioSourceNode,
+        MediaStreamConstraints,
     };
 
     /// Captures mono f32 samples from the browser's microphone via Web Audio API.
@@ -170,8 +170,9 @@ pub mod wasm {
             let constraints = MediaStreamConstraints::new();
             constraints.set_audio(&JsValue::from(true));
 
-            let promise =
-                media_devices.get_user_media_with_constraints(&constraints).ok()?;
+            let promise = media_devices
+                .get_user_media_with_constraints(&constraints)
+                .ok()?;
             let stream: MediaStream = wasm_bindgen_futures::JsFuture::from(promise)
                 .await
                 .ok()?

@@ -75,9 +75,6 @@ impl PitchDetector {
             };
         }
 
-        // --- 2. YIN-style difference function ---
-        // Compute raw AMDF, then apply cumulative mean normalization
-        // to penalize subharmonic (longer-lag) matches.
         let min_lag = (self.sample_rate as f32 / self.max_freq).ceil() as usize;
         let max_lag = (self.sample_rate as f32 / self.min_freq).floor() as usize;
 
@@ -88,7 +85,41 @@ impl PitchDetector {
             };
         }
 
-        // Compute raw difference function.
+        let cmnd = Self::compute_cmnd(samples, max_lag);
+        let (best_lag, best_val) = Self::find_best_lag(&cmnd, min_lag, max_lag);
+
+        // Confidence: 1.0 - cmnd[best] clipped to 0..1.
+        let confidence = (1.0 - best_val).clamp(0.0, 1.0);
+
+        // --- Parabolic interpolation (YIN step 4 continued) ---
+        let lag_fractional = if best_lag > min_lag && best_lag < max_lag {
+            let prev = cmnd[best_lag - 1];
+            let curr = cmnd[best_lag];
+            let next = cmnd[best_lag + 1];
+            let denom = 2.0 * (prev - 2.0 * curr + next);
+            if denom.abs() > 1e-10 {
+                let delta = (prev - next) / denom;
+                best_lag as f32 + delta
+            } else {
+                best_lag as f32
+            }
+        } else {
+            best_lag as f32
+        };
+
+        let hz = self.sample_rate as f32 / lag_fractional;
+
+        Pitch {
+            hz: Some(hz),
+            confidence,
+        }
+    }
+
+    /// Compute the cumulative mean normalized difference function (YIN steps 2–3).
+    fn compute_cmnd(samples: &[f32], max_lag: usize) -> Vec<f32> {
+        let n = samples.len();
+
+        // Raw difference function.
         let mut diff: Vec<f32> = vec![0.0; max_lag + 1];
         for lag in 0..=max_lag {
             let mut sum = 0.0f32;
@@ -101,38 +132,45 @@ impl PitchDetector {
         }
 
         // Cumulative mean normalized difference (YIN step 3).
-        // cmnd[0] = 0 (by convention, we start at min_lag).
         let mut cmnd: Vec<f32> = vec![0.0; max_lag + 1];
         cmnd[0] = 1.0;
         let mut running_sum = 0.0f32;
         for lag in 1..=max_lag {
             running_sum += diff[lag];
             let avg = running_sum / lag as f32;
-            cmnd[lag] = if avg > 0.0 { diff[lag] * lag as f32 / running_sum } else { 1.0 };
+            cmnd[lag] = if avg > 0.0 {
+                diff[lag] * lag as f32 / running_sum
+            } else {
+                1.0
+            };
         }
 
-        // Find the lag with the minimum CMND (in the valid range).
-        // YIN step 4: find the first local minimum (valley) below threshold.
-        // This avoids triggering on a downward slope before the true dip.
+        cmnd
+    }
+
+    /// Find the best period lag from the CMND (YIN step 4).
+    ///
+    /// Returns `(lag, cmnd_value)`.
+    fn find_best_lag(cmnd: &[f32], min_lag: usize, max_lag: usize) -> (usize, f32) {
         let threshold = 0.2;
         let mut best_lag: Option<usize> = None;
-        let mut best_val: f32 = f32::MAX;
+        let mut best_val = f32::MAX;
         let mut global_best_lag: usize = min_lag;
-        let mut global_best_val: f32 = f32::MAX;
+        let mut global_best_val = f32::MAX;
         let mut prev_prev_val = f32::MAX;
         let mut prev_val = f32::MAX;
 
-        for lag in min_lag..=max_lag {
-            let val = cmnd[lag];
-
-            // Track global minimum as fallback.
+        for (lag, &val) in cmnd
+            .iter()
+            .enumerate()
+            .skip(min_lag)
+            .take(max_lag + 1 - min_lag)
+        {
             if val < global_best_val {
                 global_best_val = val;
                 global_best_lag = lag;
             }
 
-            // Detect a local minimum: prev_val is lower than both its neighbors
-            // AND below threshold.
             if prev_val < threshold
                 && prev_val <= prev_prev_val
                 && prev_val <= val
@@ -148,38 +186,10 @@ impl PitchDetector {
         }
 
         // Fallback: if no dip below threshold, use global minimum.
-        if best_lag.is_none() {
-            best_lag = Some(global_best_lag);
-            best_val = global_best_val;
-        }
-
-        // Confidence: 1.0 - cmnd[best] clipped to 0..1.
-        // A deep dip (cmnd ≈ 0) → high confidence.
-        let confidence = (1.0 - best_val).clamp(0.0, 1.0);
-
-        // --- 3. Parabolic interpolation (YIN step 4 continued) ---
-        // Refine the lag estimate to sub-sample accuracy.
-        let lag = best_lag.unwrap();
-        let lag_fractional = if lag > min_lag && lag < max_lag {
-            let prev = cmnd[lag - 1];
-            let curr = cmnd[lag];
-            let next = cmnd[lag + 1];
-            let denom = 2.0 * (prev - 2.0 * curr + next);
-            if denom.abs() > 1e-10 {
-                let delta = (prev - next) / denom;
-                lag as f32 + delta
-            } else {
-                lag as f32
-            }
+        if let Some(lag) = best_lag {
+            (lag, best_val)
         } else {
-            lag as f32
-        };
-
-        let hz = self.sample_rate as f32 / lag_fractional;
-
-        Pitch {
-            hz: Some(hz),
-            confidence,
+            (global_best_lag, global_best_val)
         }
     }
 }
@@ -206,7 +216,11 @@ mod tests {
         assert!(pitch.hz.is_some(), "should detect A4");
         let hz = pitch.hz.unwrap();
         assert!((hz - 440.0).abs() < 15.0, "expected ~440 Hz, got {hz}");
-        assert!(pitch.confidence > 0.5, "confidence too low: {}", pitch.confidence);
+        assert!(
+            pitch.confidence > 0.5,
+            "confidence too low: {}",
+            pitch.confidence
+        );
     }
 
     #[test]

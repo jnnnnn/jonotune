@@ -84,7 +84,11 @@ impl JonotuneApp {
     /// Set up the pitch detector after a successful mic open.
     fn setup_detector(&mut self, sample_rate: u32) {
         self.detector = Some(PitchDetector::new(sample_rate));
-        let min_samples = self.detector.as_ref().unwrap().min_samples();
+        let min_samples = self
+            .detector
+            .as_ref()
+            .expect("detector not set up")
+            .min_samples();
         self.sample_buf = Vec::with_capacity(min_samples * 2);
         log::info!("Detector ready: {sample_rate} Hz, {min_samples} samples");
     }
@@ -476,7 +480,7 @@ fn draw_tuning_bar(ui: &mut egui::Ui, hz: f32, confidence: f32) {
 // Note / frequency helpers
 // ---------------------------------------------------------------------------
 
-/// Returns (nearest_midi_note, cents_offset).
+/// Returns (`nearest_midi_note`, `cents_offset`).
 ///
 /// Positive cents = sharp, negative = flat.
 /// A4 = MIDI 69 = 440 Hz.

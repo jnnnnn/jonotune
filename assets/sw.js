@@ -1,9 +1,9 @@
-var cacheName = 'egui-template-pwa';
+var cacheName = 'jonotune-v1';
 var filesToCache = [
   './',
   './index.html',
-  './eframe_template.js',
-  './eframe_template_bg.wasm',
+  './jonotune.js',
+  './jonotune_bg.wasm',
 ];
 
 /* Start the service worker and cache all of the app's content */
@@ -15,7 +15,20 @@ self.addEventListener('install', function (e) {
   );
 });
 
-/* Serve cached content when offline */
+/* Activate: clear old cache versions */
+self.addEventListener('activate', function (e) {
+  e.waitUntil(
+    caches.keys().then(function (keys) {
+      return Promise.all(
+        keys
+          .filter(function (key) { return key !== cacheName; })
+          .map(function (key) { return caches.delete(key); })
+      );
+    })
+  );
+});
+
+/* Serve cached content when offline, fetch fresh when online */
 self.addEventListener('fetch', function (e) {
   e.respondWith(
     caches.match(e.request).then(function (response) {

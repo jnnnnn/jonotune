@@ -74,7 +74,7 @@ impl Spectrograph {
     ///
     /// * `smooth_hz` - smoothed current pitch for the activation bars.
     /// * `smooth_confidence` - smoothed confidence for bar activation.
-    pub fn ui(&mut self, ui: &mut egui::Ui, smooth_hz: f32, smooth_confidence: f32) {
+    pub fn ui(&self, ui: &mut egui::Ui, smooth_hz: f32, smooth_confidence: f32) {
         let desired_size = ui.available_size();
         if desired_size.x <= 0.0 || desired_size.y <= 0.0 {
             return;
@@ -107,17 +107,17 @@ impl Spectrograph {
         painter.rect_filled(graph_rect, 0.0, Color32::from_gray(18));
 
         // ---- 2. Grid lines & labels ----
-        self.draw_grid(&painter, &graph_rect);
+        Self::draw_grid(painter, &graph_rect);
 
         // ---- 3. Pitch trail ----
-        self.draw_trail(&painter, &graph_rect);
+        self.draw_trail(painter, &graph_rect);
 
         // ---- 4. Current pitch marker ----
-        self.draw_current_marker(&painter, &graph_rect);
+        self.draw_current_marker(painter, &graph_rect);
 
         // ---- 5. Piano keyboard + activation bars ----
-        self.draw_keyboard_and_bars(
-            &painter,
+        Self::draw_keyboard_and_bars(
+            painter,
             &keys_rect,
             &bars_rect,
             smooth_hz,
@@ -159,7 +159,7 @@ impl Spectrograph {
     }
 
     /// Draw semitone grid lines and note labels for a single octave.
-    fn draw_grid(&self, painter: &Painter, rect: &Rect) {
+    fn draw_grid(painter: &Painter, rect: &Rect) {
         let note_names = [
             "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
         ];
@@ -238,10 +238,11 @@ impl Spectrograph {
             );
 
             // Connect to previous point if we had one (already checked confidence above).
-            if let Some((prev_pos, prev_hz)) = prev_point {
-                if hz > 0.0 && prev_hz > 0.0 {
-                    painter.line_segment([prev_pos, point], Stroke::new(1.5f32, color));
-                }
+            if let Some((prev_pos, prev_hz)) = prev_point
+                && hz > 0.0
+                && prev_hz > 0.0
+            {
+                painter.line_segment([prev_pos, point], Stroke::new(1.5f32, color));
             }
 
             prev_point = Some((point, hz));
@@ -270,9 +271,8 @@ impl Spectrograph {
         painter.circle_filled(Pos2::new(x, y), 4.0, COLOR_RECENT);
     }
 
-    /// Draw the piano-key strip (keys_rect) and per-note activation bars (bars_rect).
+    /// Draw the piano-key strip (`keys_rect`) and per-note activation bars (`bars_rect`).
     fn draw_keyboard_and_bars(
-        &self,
         painter: &Painter,
         keys_rect: &Rect,
         bars_rect: &Rect,
@@ -364,7 +364,7 @@ impl Spectrograph {
             // Label white keys inside the key area.
             if is_white(i) {
                 painter.text(
-                    Pos2::new(keys_rect.left() + 6.0, (row_top + row_bottom) / 2.0),
+                    Pos2::new(keys_rect.left() + 6.0, f32::midpoint(row_top, row_bottom)),
                     egui::Align2::LEFT_CENTER,
                     note_names[i as usize],
                     egui::FontId::monospace(9.0),
