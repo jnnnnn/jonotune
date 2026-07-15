@@ -74,7 +74,8 @@ impl Spectrograph {
     ///
     /// * `smooth_hz` - smoothed current pitch for the activation bars.
     /// * `smooth_confidence` - smoothed confidence for bar activation.
-    pub fn ui(&self, ui: &mut egui::Ui, smooth_hz: f32, smooth_confidence: f32) {
+    /// * `tuning_hz` - reference frequency for A4 (e.g. 440.0).
+    pub fn ui(&self, ui: &mut egui::Ui, smooth_hz: f32, smooth_confidence: f32, tuning_hz: f32) {
         let desired_size = ui.available_size();
         if desired_size.x <= 0.0 || desired_size.y <= 0.0 {
             return;
@@ -110,10 +111,10 @@ impl Spectrograph {
         Self::draw_grid(painter, &graph_rect);
 
         // ---- 3. Pitch trail ----
-        self.draw_trail(painter, &graph_rect);
+        self.draw_trail(painter, &graph_rect, tuning_hz);
 
         // ---- 4. Current pitch marker ----
-        self.draw_current_marker(painter, &graph_rect);
+        self.draw_current_marker(painter, &graph_rect, tuning_hz);
 
         // ---- 5. Piano keyboard + activation bars ----
         Self::draw_keyboard_and_bars(
@@ -122,6 +123,7 @@ impl Spectrograph {
             &bars_rect,
             smooth_hz,
             smooth_confidence,
+            tuning_hz,
         );
     }
 
@@ -131,23 +133,23 @@ impl Spectrograph {
 
     /// Map a frequency in Hz to a Y position within `rect`, folding all octaves
     /// into the C4–C5 range.  Higher frequency → smaller Y (closer to top).
-    fn freq_to_y(freq: f32, rect: &Rect) -> f32 {
+    fn freq_to_y(freq: f32, rect: &Rect, tuning_hz: f32) -> f32 {
         if freq <= 0.0 {
             return rect.bottom();
         }
         // Fold into the C4 (MIDI 60) octave using log₂, then map linearly in MIDI space.
-        let midi_f = 69.0 + 12.0 * (freq / 440.0).log2();
+        let midi_f = 69.0 + 12.0 * (freq / tuning_hz).log2();
         let folded = ((midi_f - 60.0) % 12.0 + 12.0) % 12.0; // 0..12  (C → B)
         let t = folded / 12.0;
         rect.bottom() - t.clamp(0.0, 1.0) * rect.height()
     }
 
     /// Return the octave number for a frequency (C4 = octave 4).
-    pub fn freq_octave(freq: f32) -> Option<i32> {
+    pub fn freq_octave(freq: f32, tuning_hz: f32) -> Option<i32> {
         if freq <= 0.0 {
             return None;
         }
-        let midi_f = 69.0 + 12.0 * (freq / 440.0).log2();
+        let midi_f = 69.0 + 12.0 * (freq / tuning_hz).log2();
         let midi = midi_f.round() as i32;
         Some(midi / 12 - 1)
     }
@@ -198,7 +200,7 @@ impl Spectrograph {
     }
 
     /// Draw the scrolling pitch trail, skipping low-confidence frames.
-    fn draw_trail(&self, painter: &Painter, rect: &Rect) {
+    fn draw_trail(&self, painter: &Painter, rect: &Rect, tuning_hz: f32) {
         let total = self.history_len;
         let mut prev_point: Option<(Pos2, f32)> = None; // (pos, hz)
 
@@ -213,7 +215,7 @@ impl Spectrograph {
             }
 
             let x = Self::index_to_x(i, rect, total);
-            let y = Self::freq_to_y(hz, rect);
+            let y = Self::freq_to_y(hz, rect, tuning_hz);
 
             // Age-based color: 0 = oldest, 1 = newest.
             let age_t = i as f32 / (total.max(1) - 1) as f32;
@@ -250,7 +252,7 @@ impl Spectrograph {
     }
 
     /// Draw a bright marker for the current (most recent) pitch.
-    fn draw_current_marker(&self, painter: &Painter, rect: &Rect) {
+    fn draw_current_marker(&self, painter: &Painter, rect: &Rect, tuning_hz: f32) {
         let newest_idx = (self.cursor + self.history_len - 1) % self.history_len;
         let (hz, confidence) = self.history[newest_idx];
 
@@ -258,7 +260,7 @@ impl Spectrograph {
             return;
         }
 
-        let y = Self::freq_to_y(hz, rect);
+        let y = Self::freq_to_y(hz, rect, tuning_hz);
         let x = rect.right();
 
         // Glow.
@@ -278,6 +280,7 @@ impl Spectrograph {
         bars_rect: &Rect,
         smooth_hz: f32,
         smooth_confidence: f32,
+        tuning_hz: f32,
     ) {
         let note_names = [
             "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
@@ -290,7 +293,7 @@ impl Spectrograph {
 
         // Compute the folded chromatic position of the current pitch (0..12).
         let chroma = if smooth_hz > 0.0 && smooth_confidence >= 0.1 {
-            let midi_f = 69.0 + 12.0 * (smooth_hz / 440.0).log2();
+            let midi_f = 69.0 + 12.0 * (smooth_hz / tuning_hz).log2();
             ((midi_f - 60.0) % 12.0 + 12.0) % 12.0
         } else {
             -1.0 // sentinel: no valid pitch
@@ -374,7 +377,7 @@ impl Spectrograph {
         }
 
         // ---- Octave indicator ----
-        if let Some(octave) = Self::freq_octave(smooth_hz) {
+        if let Some(octave) = Self::freq_octave(smooth_hz, tuning_hz) {
             let label = format!("Oct {octave}");
             painter.text(
                 Pos2::new(bars_rect.right() - 4.0, bars_rect.bottom() - 4.0),

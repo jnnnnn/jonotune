@@ -19,6 +19,8 @@ pub struct JonotuneApp {
     /// Smoothed microphone input level (0..1).
     #[serde(skip)]
     mic_level: f32,
+    /// Reference pitch for A4 in Hz (default 440).
+    tuning_hz: f32,
 
     // ---- Non-serialized fields ----
     /// Platform audio capture backend (None until mic is opened).
@@ -50,6 +52,7 @@ impl Default for JonotuneApp {
             smooth_hz: 0.0,
             smooth_confidence: 0.0,
             mic_level: 0.0,
+            tuning_hz: 440.0,
             audio: None,
             detector: None,
             spectrograph: Spectrograph::new(256),
@@ -262,7 +265,7 @@ impl eframe::App for JonotuneApp {
                 ui.label("Pitch:");
                 if self.pitch_hz > 0.0 {
                     ui.label(egui::RichText::new(format!("{:.1} Hz", self.pitch_hz)).monospace());
-                    let note = hz_to_note_name(self.pitch_hz);
+                    let note = hz_to_note_name(self.pitch_hz, self.tuning_hz);
                     ui.label(egui::RichText::new(format!("({note})")).strong());
                 } else {
                     ui.label("—");
@@ -273,15 +276,42 @@ impl eframe::App for JonotuneApp {
                 ));
             });
 
-            // Row 2: tuning indicator (always visible, uses smoothed pitch).
+            // Row 2: tuning reference preset buttons.
             ui.add_space(4.0);
-            draw_tuning_bar(ui, self.smooth_hz, self.smooth_confidence);
+            ui.horizontal(|ui| {
+                ui.label("A4 =");
+                let presets = [432.0, 438.0, 440.0, 442.0, 444.0];
+                for &hz in &presets {
+                    let label = format!("{hz:.0} Hz");
+                    if ui.selectable_label(self.tuning_hz == hz, label).clicked() {
+                        self.tuning_hz = hz;
+                    }
+                }
+                ui.add_space(4.0);
+                let mut custom = false;
+                if !presets.iter().any(|&p| (p - self.tuning_hz).abs() < 0.5) {
+                    custom = true;
+                }
+                if ui.selectable_label(custom, "Custom…").clicked() {
+                    // Open custom input — use a small drag value.
+                }
+                ui.add(
+                    egui::DragValue::new(&mut self.tuning_hz)
+                        .range(400.0..=500.0)
+                        .speed(0.1)
+                        .suffix(" Hz"),
+                );
+            });
+
+            // Row 3: tuning indicator (always visible, uses smoothed pitch).
+            ui.add_space(4.0);
+            draw_tuning_bar(ui, self.smooth_hz, self.smooth_confidence, self.tuning_hz);
         });
 
         // ---- Spectrograph (main area) ----
         egui::CentralPanel::default().show_inside(ui, |ui| {
             self.spectrograph
-                .ui(ui, self.smooth_hz, self.smooth_confidence);
+                .ui(ui, self.smooth_hz, self.smooth_confidence, self.tuning_hz);
         });
 
         // ---- Bottom bar ----
@@ -355,8 +385,8 @@ fn draw_vu_meter(ui: &mut egui::Ui, level: f32) {
 ///  G#4  [——●——————]  A4    +12¢
 ///        -50   0   +50
 /// ```
-fn draw_tuning_bar(ui: &mut egui::Ui, hz: f32, confidence: f32) {
-    let (nearest_midi, cents) = hz_to_cents(hz);
+fn draw_tuning_bar(ui: &mut egui::Ui, hz: f32, confidence: f32, tuning_hz: f32) {
+    let (nearest_midi, cents) = hz_to_cents(hz, tuning_hz);
     let target_name = midi_to_note_name(nearest_midi);
     let lower_name = midi_to_note_name(nearest_midi - 1);
 
@@ -484,11 +514,11 @@ fn draw_tuning_bar(ui: &mut egui::Ui, hz: f32, confidence: f32) {
 ///
 /// Positive cents = sharp, negative = flat.
 /// A4 = MIDI 69 = 440 Hz.
-fn hz_to_cents(hz: f32) -> (i32, f32) {
+fn hz_to_cents(hz: f32, tuning_hz: f32) -> (i32, f32) {
     if hz <= 0.0 {
         return (69, 0.0);
     }
-    let midi_f = 69.0 + 12.0 * (hz / 440.0).log2();
+    let midi_f = 69.0 + 12.0 * (hz / tuning_hz).log2();
     let nearest = midi_f.round() as i32;
     let cents = 100.0 * (midi_f - nearest as f32);
     (nearest, cents)
@@ -505,10 +535,10 @@ fn midi_to_note_name(midi: i32) -> String {
 }
 
 /// Map a frequency in Hz to the nearest musical note name (e.g. "A4").
-fn hz_to_note_name(hz: f32) -> String {
+fn hz_to_note_name(hz: f32, tuning_hz: f32) -> String {
     if hz <= 0.0 {
         return "—".into();
     }
-    let (midi, _) = hz_to_cents(hz);
+    let (midi, _) = hz_to_cents(hz, tuning_hz);
     midi_to_note_name(midi)
 }

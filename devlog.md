@@ -212,3 +212,22 @@ Horizontal bar showing cents deviation from the nearest note:
   - Renamed `clippy::empty_enum` → `empty_enums` (`Cargo.toml`)
 - `cargo fmt --check`, `cargo clippy --all-features`, and `cargo test --lib`
   all pass cleanly.
+
+---
+
+## 2026-07-15 — Tuning reference control
+
+> **Prompt:** Can we also add a control to let users tune to a different pitch?
+> Suggest designs
+
+### Implemented
+
+- Added `tuning_hz` field to `JonotuneApp` (persisted via serde, default 440).
+- Preset buttons in the top bar: **432 | 438 | 440 | 442 | 444** — one click.
+  A `DragValue` alongside for custom values (400–500 Hz range).
+- Threaded `tuning_hz` through all pitch-math:
+  - `hz_to_cents()`, `hz_to_note_name()`, `draw_tuning_bar()` in `app.rs`
+  - `freq_to_y()`, `freq_octave()`, `draw_trail()`, `draw_current_marker()`,
+    `draw_keyboard_and_bars()` in `spectrograph.rs`
+- All hardcoded 440.0 references are now parameterised.
+- Native: ✅. Wasm: ✅. Trunk: ✅. Tests: 5/5.
