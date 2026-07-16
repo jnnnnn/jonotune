@@ -138,8 +138,10 @@ impl Spectrograph {
             return rect.bottom();
         }
         // Fold into the C4 (MIDI 60) octave using log₂, then map linearly in MIDI space.
+        // +0.5 offset puts notes in the middle of their rows and makes the octave
+        // wrap boundary invisible (the jump from B→C is now ~0.002 units, not ~12).
         let midi_f = 69.0 + 12.0 * (freq / tuning_hz).log2();
-        let folded = ((midi_f - 60.0) % 12.0 + 12.0) % 12.0; // 0..12  (C → B)
+        let folded = ((midi_f - 60.0 + 0.5) % 12.0 + 12.0) % 12.0; // 0..12  (C → B)
         let t = folded / 12.0;
         rect.bottom() - t.clamp(0.0, 1.0) * rect.height()
     }

@@ -231,3 +231,20 @@ Horizontal bar showing cents deviation from the nearest note:
     `draw_keyboard_and_bars()` in `spectrograph.rs`
 - All hardcoded 440.0 references are now parameterised.
 - Native: ✅. Wasm: ✅. Trunk: ✅. Tests: 5/5.
+
+---
+
+> **Prompt:** When I play a C note it keeps wrapping really fast. Can we shift the
+> graph up a half-semitone? That would also make the lines line up with the middle
+> of the keys instead of the bottom.
+
+### Fix
+
+- Added +0.5 offset in `freq_to_y` before the octave fold modulo. Now the
+  wrap boundary sits between B and C (instead of right on C), so crossing
+  the octave boundary produces a ~0.002-unit jump instead of ~12 units.
+- In-tune notes appear in the middle of their grid rows, centered between
+  the two grid lines. Grid lines still mark note boundaries, aligning with
+  the piano-key edges.
+- Keyboard bars unaffected (the distance kernel is shift-invariant).
+- Native: ✅. Wasm: ✅. Trunk: ✅. Tests: 5/5.
