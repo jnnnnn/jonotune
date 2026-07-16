@@ -163,20 +163,22 @@ impl Spectrograph {
     }
 
     /// Draw semitone grid lines and note labels for a single octave.
+    ///
+    /// Grid lines are drawn at the *center* of each semitone row (0.5 offset),
+    /// so a perfectly in-tune note lands exactly on its line.  Distance from
+    /// the dot to the nearest line is the cents deviation.
     fn draw_grid(painter: &Painter, rect: &Rect) {
         let note_names = [
             "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
         ];
         let is_natural = |i: i32| -> bool { matches!(i, 0 | 2 | 4 | 5 | 7 | 9 | 11) };
 
-        // Draw 13 lines: 12 semitone boundaries + the top (C of next octave).
-        for i in 0..=12 {
-            // i = 0 → C, i = 1 → C#, ..., i = 11 → B, i = 12 → C (top)
-            let t = i as f32 / 12.0;
+        // 12 lines, one per semitone, centered in each row.
+        for i in 0i32..12 {
+            let t = (i as f32 + 0.5) / 12.0;
             let y = rect.bottom() - t * rect.height();
 
-            let note_idx = i % 12; // i=12 wraps to 0 (C)
-            let (alpha, width) = if is_natural(note_idx) {
+            let (alpha, width) = if is_natural(i) {
                 (80, 1.0f32)
             } else {
                 (35, 0.5f32)
@@ -189,11 +191,11 @@ impl Spectrograph {
             );
 
             // Label naturals on the left edge.
-            if is_natural(note_idx) && i < 12 {
+            if is_natural(i) {
                 painter.text(
                     Pos2::new(rect.left() + 4.0, y - 4.0),
                     egui::Align2::LEFT_CENTER,
-                    note_names[note_idx as usize],
+                    note_names[i as usize],
                     egui::FontId::monospace(11.0),
                     Color32::from_gray(160),
                 );

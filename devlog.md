@@ -248,3 +248,19 @@ Horizontal bar showing cents deviation from the nearest note:
   the piano-key edges.
 - Keyboard bars unaffected (the distance kernel is shift-invariant).
 - Native: ✅. Wasm: ✅. Trunk: ✅. Tests: 5/5.
+
+---
+
+> **Prompt:** also fix the grid lines, and make the display show how far off the
+> nearest gridline we are.
+
+### Fix
+
+- Moved grid lines from note boundaries to note centers (the same +0.5 offset
+  used by the pitch dots).  Now draws 12 lines instead of 13 — one per
+  semitone, running through the middle of each key row.
+- A perfectly in-tune note lands exactly on its grid line.
+- The vertical distance from the dot to the nearest line is proportional to
+  cents deviation — you can see how out of tune you are directly on the graph.
+- Natural notes get bold lines + labels; sharps/flats get thin lines only.
+- Native: ✅. Wasm: ✅. Trunk: ✅. Tests: 5/5.
