@@ -264,3 +264,19 @@ Horizontal bar showing cents deviation from the nearest note:
   cents deviation — you can see how out of tune you are directly on the graph.
 - Natural notes get bold lines + labels; sharps/flats get thin lines only.
 - Native: ✅. Wasm: ✅. Trunk: ✅. Tests: 5/5.
+
+---
+
+> **Prompt:** check that the gha deploy to jnnnnn.github.io/jonotune went ok
+
+### CI fixes
+
+- Deploy was fine; CI (`rust.yml`) was failing on `check`, `clippy`, and `test`
+  due to missing `libasound2-dev` (required by cpal on Linux).
+- Added `sudo apt-get update && sudo apt-get install libasound2-dev ...`
+  to all three native jobs (`check`, `test`, `clippy`).
+- Fixed two clippy warnings: extracted `draw_tuning_presets` helper to stay
+  under `too_many_lines` limit, and wrapped `selectable_label` with `drop()`
+  to satisfy `unused_must_use`.
+- CI now all green: ✅ check, ✅ check_wasm, ✅ test, ✅ fmt, ✅ clippy.
+- Pages deploy: ✅ at https://jnnnnn.github.io/jonotune/
