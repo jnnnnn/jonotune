@@ -278,30 +278,7 @@ impl eframe::App for JonotuneApp {
 
             // Row 2: tuning reference preset buttons.
             ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                ui.label("A4 =");
-                let presets = [432.0, 438.0, 440.0, 442.0, 444.0];
-                for &hz in &presets {
-                    let label = format!("{hz:.0} Hz");
-                    if ui.selectable_label(self.tuning_hz == hz, label).clicked() {
-                        self.tuning_hz = hz;
-                    }
-                }
-                ui.add_space(4.0);
-                let mut custom = false;
-                if !presets.iter().any(|&p| (p - self.tuning_hz).abs() < 0.5) {
-                    custom = true;
-                }
-                if ui.selectable_label(custom, "Custom…").clicked() {
-                    // Open custom input — use a small drag value.
-                }
-                ui.add(
-                    egui::DragValue::new(&mut self.tuning_hz)
-                        .range(400.0..=500.0)
-                        .speed(0.1)
-                        .suffix(" Hz"),
-                );
-            });
+            draw_tuning_presets(ui, &mut self.tuning_hz);
 
             // Row 3: tuning indicator (always visible, uses smoothed pitch).
             ui.add_space(4.0);
@@ -373,6 +350,34 @@ fn draw_vu_meter(ui: &mut egui::Ui, level: f32) {
         egui::FontId::monospace(10.0),
         egui::Color32::from_gray(200),
     );
+}
+
+// ---------------------------------------------------------------------------
+// Tuning reference presets
+// ---------------------------------------------------------------------------
+
+/// Draw a row of preset buttons for common A4 reference frequencies,
+/// plus a `DragValue` for custom values.
+fn draw_tuning_presets(ui: &mut egui::Ui, tuning_hz: &mut f32) {
+    ui.horizontal(|ui| {
+        ui.label("A4 =");
+        let presets = [432.0, 438.0, 440.0, 442.0, 444.0];
+        for &hz in &presets {
+            let label = format!("{hz:.0} Hz");
+            if ui.selectable_label(*tuning_hz == hz, label).clicked() {
+                *tuning_hz = hz;
+            }
+        }
+        ui.add_space(4.0);
+        let is_custom = !presets.iter().any(|&p| (p - *tuning_hz).abs() < 0.5);
+        drop(ui.selectable_label(is_custom, "Custom…"));
+        ui.add(
+            egui::DragValue::new(tuning_hz)
+                .range(400.0..=500.0)
+                .speed(0.1)
+                .suffix(" Hz"),
+        );
+    });
 }
 
 // ---------------------------------------------------------------------------
