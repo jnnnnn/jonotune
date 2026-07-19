@@ -280,3 +280,17 @@ Horizontal bar showing cents deviation from the nearest note:
   to satisfy `unused_must_use`.
 - CI now all green: ✅ check, ✅ check_wasm, ✅ test, ✅ fmt, ✅ clippy.
 - Pages deploy: ✅ at https://jnnnnn.github.io/jonotune/
+
+---
+
+## 2026-07-19 — Replace deprecated CI actions
+
+> **Prompt:** Node.js 20 deprecation and `set-output` warnings in CI
+
+### Fix
+
+- Replaced deprecated `actions-rs/toolchain@v1` with `dtolnay/rust-toolchain@stable`.
+- Replaced `actions-rs/cargo@v1` with direct `run: cargo ...` commands throughout
+  `rust.yml` (check, test, fmt, clippy, check_wasm).
+- Eliminates all Node.js 20 deprecation and `set-output` warnings.
+- All 5 CI jobs remain green.
